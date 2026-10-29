@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2
+
+- Update the TLS trust bundle to certifi 2026.10.19.
+- Require a CSRF header for proxy-authenticated admin writes.
+- Reject trusted sessions from revoked push devices, including revocation before consume.
+- Repair isolated web tests and Android SDK setup in CI.
+
 ## 1.0.1
 
 - Renamed internal identifiers

@@ -1,4 +1,4 @@
-# PushGate 1.0.1
+# PushGate 1.0.2
 
 Self-hosted push-approval MFA for SSH/PAM. A server, Android phone and Wear OS clients, a PAM helper, a Python SDK and a browser admin console are included.
 
@@ -63,7 +63,7 @@ F1 isolates login attempts and makes consumption single-use. An explicit attempt
 The server image builds using only this tree:
 
 ```sh
-docker build -f server/Dockerfile -t pushgate:1.0.1 .
+docker build -f server/Dockerfile -t pushgate:1.0.2 .
 ```
 
 Python runtime and PAM requirements are pinned with hashes; npm uses its lockfile; Android uses strict dependency locks and checksum verification. See [contributing](CONTRIBUTING.md) for test commands and isolation requirements. The CI workflow checks Python, browser tests, Android unit tests and the image build without publishing images or requiring secrets. Android device instrumentation needs a separately provisioned disposable emulator.

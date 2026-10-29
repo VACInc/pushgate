@@ -16,7 +16,7 @@ def test_python_distribution_retains_single_upgrade_owner() -> None:
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert metadata["project"]["name"] == "pushgate"
-    assert metadata["project"]["version"] == "1.0.1"
+    assert metadata["project"]["version"] == "1.0.2"
     assert {"pushgate", "server", "pam"} <= set(metadata["tool"]["setuptools"]["packages"])
 
     lock = (ROOT / "requirements.lock").read_text(encoding="utf-8")

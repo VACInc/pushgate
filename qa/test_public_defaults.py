@@ -29,7 +29,7 @@ def test_anonymous_admin_and_debug_routes_are_closed(tmp_path):
 def test_api_schema_requires_explicit_opt_in(tmp_path):
     app = create_app(Settings(_env_file=None, database_url=f"sqlite:///{tmp_path / 'docs.db'}", api_docs_enabled=True))
     with TestClient(app) as client:
-        assert client.get("/openapi.json").json()["info"]["version"] == "1.0.1"
+        assert client.get("/openapi.json").json()["info"]["version"] == "1.0.2"
 
 
 def test_malformed_push_endpoint_is_rejected():

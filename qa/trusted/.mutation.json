@@ -1,0 +1,14 @@
+{
+  "name": "trusted-revocation",
+  "sources": [
+    "server/app/main.py"
+  ],
+  "test_cmd": "python -m pytest -q qa/trusted -p no:cacheprovider",
+  "timeout_s": 60,
+  "language": "python",
+  "exclude_lines": [
+    "^(?! {20}(?:\\(Device.user_id == approver_user.id\\)|& Device\\.(?:revoked|public_key))|.*(?:trusted_device_id =|approved_by_device_id=trusted_device_id)).*"
+  ],
+  "baseline_score": 1.0,
+  "notes": "Mutate only the new trust query predicates and device provenance assignment, not unrelated device listings."
+}

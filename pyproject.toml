@@ -1,7 +1,7 @@
 [project]
 # Retained from 0.1.0 so upgrades continue to have one distribution owner.
 name = "pushgate"
-version = "1.0.1"
+version = "1.0.2"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 description = "Self-hosted push-approval MFA for SSH and PAM"

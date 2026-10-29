@@ -286,7 +286,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="PushGate API",
-        version="1.0.1",
+        version="1.0.2",
         description="Self-hosted push MFA Admin and authentication API.",
         lifespan=lifespan,
         docs_url="/docs" if settings.api_docs_enabled else None,
@@ -803,12 +803,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         source_ip: str | None,
         pam_service: str,
         window_seconds: int,
-    ) -> bool:
+    ) -> AuthRequest | None:
         if online_only(db, integration) or window_seconds <= 0:
-            return False
+            return None
         cutoff = (utcnow() - timedelta(seconds=window_seconds)).replace(tzinfo=None)
         prior = db.scalar(
             select(AuthRequest)
+            .outerjoin(Device, Device.id == AuthRequest.approved_by_device_id)
             .where(
                 AuthRequest.user_id == user.id,
                 func.coalesce(AuthRequest.approver_user_id, AuthRequest.user_id) == approver_user.id,
@@ -818,12 +819,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 AuthRequest.pam_service == pam_service,
                 AuthRequest.status == "approved",
                 AuthRequest.factor.in_(("push", "totp", "backup_code")),
+                # Offline factors have no approving device. Push trust must
+                # still belong to a live device of the current approver.
+                or_(
+                    AuthRequest.factor.in_(("totp", "backup_code")),
+                    (Device.user_id == approver_user.id)
+                    & Device.revoked.is_(False)
+                    & Device.public_key.is_not(None),
+                ),
                 AuthRequest.consumed_at.is_not(None),
                 AuthRequest.consumed_at >= cutoff,
             )
             .order_by(AuthRequest.consumed_at.desc())
         )
-        return prior is not None
+        return prior
 
     def pending_duplicate(
         db: Session,
@@ -2006,7 +2015,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         elif approver_user.locked:
             status = "denied"
             factor = "approver_lockout"
-        elif not offline_code and trusted_session_active(
+        elif not offline_code and (trusted_grant := trusted_session_active(
             db,
             user,
             approver_user,
@@ -2015,9 +2024,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             source_ip,
             pam_service,
             int(global_settings.get("trusted_session_window_seconds") or 0),
-        ):
+        )) is not None:
             status = "approved"
             factor = "trusted_session"
+            # Preserve push provenance so consume rechecks concurrent revocation.
+            trusted_device_id = trusted_grant.approved_by_device_id if trusted_grant.factor == "push" else None
         elif offline_code:
             totp_step = matching_totp_counter(user.totp_secret, str(offline_code)) if user.totp_secret else None
             if totp_step is not None:
@@ -2111,6 +2122,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             source_ip=source_ip,
             status=status,
             factor=factor,
+            approved_by_device_id=trusted_device_id if factor == "trusted_session" else None,
             fail_mode_effective=fail_mode,
             detail=detail,
             expires_at=expires_at,
