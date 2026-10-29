@@ -1,0 +1,14 @@
+{
+  "name": "public-defaults",
+  "sources": [
+    "server/app/push.py",
+    "server/app/config.py"
+  ],
+  "test_cmd": "python -m pytest -q qa/test_public_defaults.py -p no:cacheprovider",
+  "timeout_s": 30,
+  "language": "python",
+  "exclude_lines": [
+    "^(?!.*(?:return False|API_DOCS_ENABLED|CORS_ALLOW)).*"
+  ],
+  "baseline_score": 1.0
+}

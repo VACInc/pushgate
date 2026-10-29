@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    restart: unless-stopped
+    environment:
+      # POSTGRES_PASSWORD initializes new volumes only. Existing volumes must
+      # follow docs/production.md before changing the application credential.
+      POSTGRES_DB: pushgate
+      POSTGRES_USER: pushgate
+      POSTGRES_PASSWORD: ${PUSHGATE_POSTGRES_PASSWORD:?set PUSHGATE_POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pushgate"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    restart: unless-stopped
+
+  # Keep the original service key so Compose upgrades replace the deployed app
+  # container instead of creating a second container alongside an orphan.
+  server:
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    environment:
+      PUSHGATE_DATABASE_URL: ${PUSHGATE_DATABASE_URL:-postgresql+psycopg://pushgate:${PUSHGATE_POSTGRES_PASSWORD:?set PUSHGATE_POSTGRES_PASSWORD}@postgres:5432/pushgate}
+      PUSHGATE_REDIS_URL: ${PUSHGATE_REDIS_URL:-redis://redis:6379/0}
+      PUSHGATE_BOOTSTRAP_TOKEN: ${PUSHGATE_BOOTSTRAP_TOKEN:?set PUSHGATE_BOOTSTRAP_TOKEN}
+      PUSHGATE_CORS_ALLOW_ORIGINS: ""
+      PUSHGATE_CORS_ALLOW_ORIGIN_REGEX: ""
+      # Optional ntfy wake-up (no FCM): empty values leave it disabled.
+      PUSHGATE_NTFY_URL: ${PUSHGATE_NTFY_URL:-}
+      PUSHGATE_NTFY_AUTH: ${PUSHGATE_NTFY_AUTH:-}
+      PUSHGATE_NTFY_PRIORITY: ${PUSHGATE_NTFY_PRIORITY:-high}
+      # UnifiedPush over self-hosted ntfy: credential is only sent to this host.
+      PUSHGATE_UNIFIEDPUSH_AUTH: ${PUSHGATE_UNIFIEDPUSH_AUTH:-}
+      PUSHGATE_UNIFIEDPUSH_AUTH_HOST: ${PUSHGATE_UNIFIEDPUSH_AUTH_HOST:-}
+      PUSHGATE_UNIFIEDPUSH_ALLOWED_HOSTS: ${PUSHGATE_UNIFIEDPUSH_ALLOWED_HOSTS:-}
+    ports:
+      - "${PUSHGATE_APP_BIND:-127.0.0.1}:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  pgdata:

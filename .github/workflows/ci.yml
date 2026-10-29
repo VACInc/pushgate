@@ -1,0 +1,61 @@
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --require-hashes -r requirements.lock -r requirements-dev.lock
+      - run: ruff check --select E9,F63,F7,F82 server pam sdk qa
+      - name: Test without external network
+        run: sudo env PATH="$PATH" unshare --net -- bash -c 'ip link set lo up; exec "$@"' bash python -m pytest -q qa pam sdk
+  web:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: admin-web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - name: Test without external network
+        run: sudo env PATH="$PATH" unshare --net -- bash -c 'ip link set lo up; exec "$@"' bash npm test
+      - run: npm run build
+  android:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        app: [android-phone, android-wear]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Fetch locked dependencies and compile
+        run: ./gradlew --no-daemon assembleDebug compileDebugUnitTestKotlin
+        working-directory: ${{ matrix.app }}
+      - name: Test offline without external network
+        run: sudo env PATH="$PATH" JAVA_HOME="$JAVA_HOME" ANDROID_HOME="$ANDROID_HOME" GRADLE_USER_HOME="$HOME/.gradle" unshare --net -- bash -c 'ip link set lo up; exec "$@"' bash ./gradlew --no-daemon --offline testDebugUnitTest
+        working-directory: ${{ matrix.app }}
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: docker build -f server/Dockerfile -t pushgate-ci:1.0.1 .

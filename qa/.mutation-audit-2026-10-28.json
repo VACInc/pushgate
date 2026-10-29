@@ -1,0 +1,15 @@
+{
+  "name": "pushgate-audit-2026-10-28-f1-f4",
+  "sources": [
+    "server/app/main.py",
+    "server/app/db.py"
+  ],
+  "test_cmd": "python -m pytest -q -x qa/test_audit_2026_10_28.py -p no:cacheprovider",
+  "timeout_s": 120,
+  "language": "python",
+  "exclude_lines": [
+    "^(?!.*(if auth_req\\.consumed_at is not None|detail\\.get\\(\"attempt_id\"\\) == attempt_id|if status == \"pending\" and attempt_id|if not principal or principal\\.locked|if not approver or approver\\.locked|device\\.revoked or not device\\.public_key or device\\.user_id != approver_user_id:$|auth_req\\.status = \"denied\"|if \"options\" not in query|known_pending\\.add\\(event_id\\)|if row\\.id not in known_pending|if user\\.locked else|r\"\\[A-Za-z0-9_-\\]\\{16,128\\}\")).*"
+  ],
+  "baseline_score": 1.0,
+  "notes": "F1-F4 boundary lines only (single consume, attempt-bound dedupe, consume revalidation, lockout cancellation, WebSocket reconcile, PostgreSQL session timeouts). Set PUSHGATE_TEST_POSTGRES_URL to a disposable database to include the live lock/statement timeout case."
+}

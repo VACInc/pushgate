@@ -1,0 +1,40 @@
+[project]
+# Retained from 0.1.0 so upgrades continue to have one distribution owner.
+name = "pushgate"
+version = "1.0.1"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+description = "Self-hosted push-approval MFA for SSH and PAM"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.139.2",
+  "uvicorn[standard]==0.51.0",
+  "sqlalchemy==2.0.51",
+  "pydantic-settings==2.14.2",
+  "httpx==0.28.1",
+  "pyotp==2.10.0",
+  "cryptography==49.0.0",
+  "redis==8.0.1",
+]
+
+[project.optional-dependencies]
+postgres = [
+  "psycopg[binary]==3.3.4",
+]
+test = [
+  "pytest==8.3.5",
+]
+
+[build-system]
+requires = ["setuptools==83.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["server", "server.app", "pam", "pushgate"]
+
+[tool.setuptools.package-dir]
+pushgate = "sdk/pushgate"
+
+[tool.pytest.ini_options]
+pythonpath = ["server", "sdk", "."]
+testpaths = ["qa", "pam"]

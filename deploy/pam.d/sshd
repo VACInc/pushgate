@@ -1,0 +1,2 @@
+# Add after normal password/key auth in /etc/pam.d/sshd.
+auth required pam_exec.so expose_authtok seteuid /usr/local/libexec/pushgate_pam

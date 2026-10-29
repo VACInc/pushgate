@@ -1,0 +1,2 @@
+# Console login sample. Keep a root break-glass session open while testing.
+auth required pam_exec.so expose_authtok seteuid /usr/local/libexec/pushgate_pam

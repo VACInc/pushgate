@@ -1,0 +1,59 @@
+services:
+  # This must match the stable service key in docker-compose.yml. PushGate is
+  # still the public Traefik service/router name and product identity below.
+  server:
+    environment:
+      PUSHGATE_TRUSTED_PROXY_AUTH_ENABLED: "true"
+      PUSHGATE_TRUSTED_PROXY_AUTH_ADMIN_GROUPS: ${PUSHGATE_PROXY_ADMIN_GROUPS:-pushgate-admins}
+      PUSHGATE_TRUSTED_PROXY_AUTH_ROLE: ${PUSHGATE_PROXY_PROXY_ROLE:-admin}
+      PUSHGATE_TRUSTED_PROXY_AUTH_SECRET: ${PUSHGATE_PROXY_AUTH_SECRET:?set PUSHGATE_PROXY_AUTH_SECRET}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${PUSHGATE_TRAEFIK_NETWORK:-traefik}"
+      - "traefik.http.services.pushgate.loadbalancer.server.port=8000"
+      - "traefik.http.routers.pushgate-public.rule=Host(`${PUSHGATE_HOST:?set PUSHGATE_HOST}`) && (Path(`/healthz`) || PathPrefix(`/api/v1`))"
+      - "traefik.http.routers.pushgate-public.entrypoints=${PUSHGATE_TRAEFIK_ENTRYPOINTS:-websecure}"
+      - "traefik.http.routers.pushgate-public.middlewares=pushgate-strip-auth-headers@docker,pushgate-proxy-secret@docker,pushgate-secure-headers@docker"
+      - "traefik.http.routers.pushgate-public.priority=200"
+      - "traefik.http.routers.pushgate-public.service=pushgate"
+      - "traefik.http.routers.pushgate-public.tls=true"
+      - "traefik.http.routers.pushgate-public.tls.certresolver=${PUSHGATE_TRAEFIK_CERTRESOLVER:-letsencrypt}"
+      - "traefik.http.routers.pushgate-admin.rule=Host(`${PUSHGATE_HOST:?set PUSHGATE_HOST}`)"
+      - "traefik.http.routers.pushgate-admin.entrypoints=${PUSHGATE_TRAEFIK_ENTRYPOINTS:-websecure}"
+      - "traefik.http.routers.pushgate-admin.middlewares=pushgate-strip-auth-headers@docker,pushgate-proxy@docker,pushgate-proxy-secret@docker,pushgate-secure-headers@docker"
+      - "traefik.http.routers.pushgate-admin.priority=100"
+      - "traefik.http.routers.pushgate-admin.service=pushgate"
+      - "traefik.http.routers.pushgate-admin.tls=true"
+      - "traefik.http.routers.pushgate-admin.tls.certresolver=${PUSHGATE_TRAEFIK_CERTRESOLVER:-letsencrypt}"
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-proxy-username="
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-proxy-groups="
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-proxy-entitlements="
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-proxy-email="
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-proxy-name="
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-proxy-uid="
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-proxy-jwt="
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-proxy-meta-jwks="
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-proxy-meta-outpost="
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-proxy-meta-provider="
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-proxy-meta-app="
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-proxy-meta-version="
+      - "traefik.http.middlewares.pushgate-strip-auth-headers.headers.customRequestHeaders.X-PushGate-Proxy-Secret="
+      - "traefik.http.middlewares.pushgate-proxy.forwardauth.address=${PUSHGATE_PROXY_FORWARD_AUTH_URL:?set PUSHGATE_PROXY_FORWARD_AUTH_URL}"
+      - "traefik.http.middlewares.pushgate-proxy.forwardauth.authRequestHeaders=Cookie"
+      - "traefik.http.middlewares.pushgate-proxy.forwardauth.trustForwardHeader=false"
+      - "traefik.http.middlewares.pushgate-proxy.forwardauth.authResponseHeaders=X-proxy-username,X-proxy-groups,X-proxy-entitlements,X-proxy-email,X-proxy-name,X-proxy-uid"
+      - "traefik.http.middlewares.pushgate-proxy-secret.headers.customRequestHeaders.X-PushGate-Proxy-Secret=${PUSHGATE_PROXY_AUTH_SECRET:?set PUSHGATE_PROXY_AUTH_SECRET}"
+      - "traefik.http.middlewares.pushgate-secure-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.pushgate-secure-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.pushgate-secure-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.pushgate-secure-headers.headers.contentSecurityPolicy=default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; manifest-src 'self'"
+      - "traefik.http.middlewares.pushgate-secure-headers.headers.referrerPolicy=no-referrer"
+      - "traefik.http.middlewares.pushgate-secure-headers.headers.permissionsPolicy=camera=(), geolocation=(), microphone=()"
+    networks:
+      - default
+      - traefik
+
+networks:
+  traefik:
+    external: true
+    name: ${PUSHGATE_TRAEFIK_NETWORK:-traefik}

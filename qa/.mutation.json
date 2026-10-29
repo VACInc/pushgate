@@ -1,0 +1,10 @@
+{
+  "name": "pushgate-db-parameter-privacy",
+  "sources": ["server/app/db.py"],
+  "test_cmd": "python -m pytest -q qa/test_db_parameter_privacy.py -p no:cacheprovider",
+  "timeout_s": 30,
+  "language": "python",
+  "exclude_lines": ["^(?!.*self\\.engine = create_engine).*"],
+  "baseline_score": 1.0,
+  "notes": "F5 boundary: mutate the engine construction line; unrelated SQLite ownership and schema policy are outside this audit fix. Sample 5 covers both available boolean mutations. Run through the host hermetic guard with installed test dependencies."
+}
