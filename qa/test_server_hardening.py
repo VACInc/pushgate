@@ -669,9 +669,13 @@ def test_concurrent_duplicate_shortening_cannot_be_overwritten_by_decision(
                     attempt_id=f"deadline-race-attempt-{index:04}",
                 )
 
+            # Stagger the decision so some iterations land after the shortening on any runner speed
+            # (a fixed 5 ms let a slow CI runner's decision win all 12 rounds: no race exercised).
+            delay = (0.005, 0.02, 0.05, 0.1)[index % 4]
+
             def approve() -> object:
                 barrier.wait(timeout=5)
-                time.sleep(0.005)
+                time.sleep(delay)
                 return decide(client_a, request_id, device["id"], private_key)
 
             with ThreadPoolExecutor(max_workers=2) as pool:
