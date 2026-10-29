@@ -44,3 +44,18 @@ Environment variables take precedence over `.env`. Use `PUSHGATE_` setting names
 | `PUSHGATE_CORS_ALLOW_ORIGIN_REGEX` | `None` |  |
 
 Use a private owner-only directory for SQLite. Database URLs and notification credentials are secrets. Protect `.env` with mode 0600; do not commit it. For PostgreSQL, zero disables a timeout and explicit URL `options` overrides the defaults.
+
+## Proxy authentication and CSRF
+
+Proxy-authenticated `POST`, `PUT`, `PATCH` and `DELETE` requests must include
+`X-PushGate-CSRF: 1`. The admin web client sends it automatically, including
+bodyless writes. Other proxy-authenticated clients must set it themselves.
+Missing or incorrect values return 403 before the operation. Reads and direct
+bearer/API-key automation do not require this header; proxy identity still takes
+precedence when both authentication mechanisms are present.
+
+Keep CORS origins explicit and limited to trusted admin UI origins. Never allow
+wildcard origins or a broad origin regex: the custom header forces a browser
+preflight, which must reject hostile origins. The identity proxy must forward
+this client header, never inject it automatically. Keep stripping untrusted
+identity assertions and validating the proxy secret and administrator groups.

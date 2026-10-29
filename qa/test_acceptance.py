@@ -579,7 +579,7 @@ def test_proxy_proxy_headers_can_authorize_admin_api(tmp_path: Path):
 
         response = httpx.post(
             f"{base_url}/api/admin/users",
-            headers={"X-proxy-username": "alice", "X-proxy-groups": "operators,pushgate-admins", "X-PushGate-Proxy-Secret": "proxy-test-secret"},
+            headers={"X-proxy-username": "alice", "X-proxy-groups": "operators,pushgate-admins", "X-PushGate-Proxy-Secret": "proxy-test-secret", "X-PushGate-CSRF": "1"},
             json={"username": "proxy-admin"},
             timeout=5,
         )

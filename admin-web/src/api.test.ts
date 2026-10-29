@@ -6,6 +6,29 @@ describe("AdminApi", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each(["", "token-1"])("marks every unsafe request with CSRF header (token %s)", async (token) => {
+    const requests: Request[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(new Request(input, init));
+      return jsonResponse({ data: {} });
+    }));
+    const api = new AdminApi("https://pushgate.example", token);
+    await api.users();
+    await api.lockUser("user-1");
+    await api.enrollTotp("user-1");
+    await api.patchUser("user-1", { display_name: "Updated" });
+    await api.unlockUser("user-1");
+    // Exercise the shared transport for future PUT flows, too.
+    await (api as unknown as { request: (path: string, init: RequestInit) => Promise<unknown> })
+      .request("/api/admin/probe", { method: "PUT" });
+    expect(requests[0].headers.has("X-PushGate-CSRF")).toBe(false);
+    for (const request of requests.slice(1)) {
+      expect(request.headers.get("X-PushGate-CSRF")).toBe("1");
+      expect(request.credentials).toBe("same-origin");
+      expect(request.headers.get("Authorization")).toBe(token ? `Bearer ${token}` : null);
+    }
+  });
+
   it("adds bearer auth and omits empty query values", async () => {
     const requests: Request[] = [];
     vi.stubGlobal(

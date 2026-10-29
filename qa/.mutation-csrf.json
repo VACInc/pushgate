@@ -1,0 +1,13 @@
+{
+  "name": "proxy-csrf",
+  "sources": [
+    "server/app/main.py"
+  ],
+  "test_cmd": "python -m pytest -q qa/test_prepub_security.py -p no:cacheprovider",
+  "timeout_s": 60,
+  "language": "python",
+  "exclude_lines": [
+    "^(?!.*x-pushgate-csrf).*"
+  ],
+  "baseline_score": 1.0
+}

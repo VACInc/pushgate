@@ -350,6 +350,9 @@ export class AdminApi {
     const headers = new Headers(init.headers);
     if (this.token.trim()) headers.set("Authorization", `Bearer ${this.token.trim()}`);
     headers.set("Accept", "application/json");
+    if (["POST", "PUT", "PATCH", "DELETE"].includes((init.method ?? "GET").toUpperCase())) {
+      headers.set("X-PushGate-CSRF", "1");
+    }
     if (init.body) headers.set("Content-Type", "application/json");
 
     const response = await fetch(url, {

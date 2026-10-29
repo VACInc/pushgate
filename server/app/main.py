@@ -621,6 +621,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 presented_groups = group_list(request.headers.get(settings.trusted_proxy_auth_groups_header))
                 if required_groups and not required_groups.intersection(presented_groups):
                     raise HTTPException(status_code=403, detail={"code": "proxy_group_required", "message": "Identity proxy user is missing a required PushGate admin group"})
+                # Cookie-backed proxy identity needs a non-simple request marker.
+                # Explicit CORS origins prevent hostile pages preflighting it.
+                if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.headers.get("x-pushgate-csrf") != "1":
+                    raise HTTPException(status_code=403, detail={"code": "csrf_header_required", "message": "X-PushGate-CSRF: 1 required"})
                 role = settings.trusted_proxy_auth_role
                 permissions = role_permissions(db, role)
                 if not permissions:
