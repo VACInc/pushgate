@@ -24,6 +24,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .config import Settings
 from .db import Database
+from .delivery_watch import UnansweredWatch
 from .ephemeral import build_auth_state
 from .models import ApiKey, AuditLog, AuthLogEntry, AuthRequest, BackupCode, Device, DeviceNonce, Group, Integration, Nonce, Policy, ProvisionerScope, ProvisionedIntegration, Role, Setting, User, UserGroup, now
 from .push import FanoutDisconnected, build_push_fanout, build_push_provider, unifiedpush_endpoint_allowed
@@ -296,6 +297,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.db = db_handle
     app.state.settings = settings
     app.state.auth_state = build_auth_state(settings.redis_url)
+    app.state.unanswered_watch = UnansweredWatch()
     app.state.push_fanout = build_push_fanout(settings.redis_url)
     app.state.push_provider = build_push_provider(
         settings.fcm_access_token,
@@ -956,6 +958,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for auth_req in expired:
                 emit_auth_syslog(auth_req)
                 schedule_resolution(auth_req)
+                if auth_req.approved_by_device_id is None:
+                    app.state.unanswered_watch.unanswered(auth_req.id, auth_req.system)
         return len(expired)
 
     def prune_replay_nonces(db: Session) -> int:
@@ -2307,6 +2311,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 emit_auth_syslog(auth_req)
                 if was_pending:
                     schedule_resolution(auth_req)
+                    app.state.unanswered_watch.unanswered(auth_req.id, auth_req.system)
             return auth_req, False
         if auth_req.status != "approved":
             return auth_req, False
@@ -2497,6 +2502,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.auth_state.delete(auth_req.id)
         emit_auth_syslog(auth_req)
         schedule_resolution(auth_req)
+        if auth_req.status in ("approved", "denied"):
+            app.state.unanswered_watch.answered()
         return envelope({"id": auth_req.id, "status": auth_req.status, "allowed": auth_req.status == "approved"})
 
     def ws_authenticate(websocket: WebSocket, device_id: str) -> str | None:
