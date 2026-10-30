@@ -97,7 +97,8 @@ data class AuthChallenge(
     val geolocation: String?,
     val requestedAt: String?,
     val expiresAt: String,
-    val requireBiometric: Boolean
+    val requireBiometric: Boolean,
+    val reason: String? = null
 ) {
     companion object {
         fun fromJson(json: JSONObject): AuthChallenge {
@@ -111,7 +112,8 @@ data class AuthChallenge(
                 geolocation = optionalString(json, "geolocation") ?: detail?.let { optionalString(it, "geolocation") },
                 requestedAt = optionalString(json, "requested_at") ?: detail?.let { optionalString(it, "timestamp") } ?: optionalString(json, "created_at"),
                 expiresAt = json.optString("expires_at"),
-                requireBiometric = json.optBoolean("require_biometric", true)
+                requireBiometric = json.optBoolean("require_biometric", true),
+                reason = optionalString(json, "reason") ?: detail?.let { optionalString(it, "reason") }
             )
         }
 

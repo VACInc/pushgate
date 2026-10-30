@@ -9,7 +9,7 @@ class WearAuthNotificationDispatcherTest {
     @Test
     fun formatsConcisePushGateRequest() {
         assertEquals(
-            "alice requests sshd on bastion from 192.0.2.10",
+            "alice requests bastion from 192.0.2.10",
             wearNotificationText(challenge(pamService = "ssh", sourceIp = "192.0.2.10"))
         )
     }
@@ -17,9 +17,28 @@ class WearAuthNotificationDispatcherTest {
     @Test
     fun usesSafeLabelsForMissingFields() {
         assertEquals(
-            "Unknown user requests authentication on unknown device from unknown IP",
+            "Unknown user requests unknown device from unknown IP",
             wearNotificationText(challenge(username = "", pamService = "", system = "", sourceIp = ""))
         )
+    }
+
+    @Test
+    fun namesTheHostOnceAndPutsAReasonOnASecondLine() {
+        assertEquals(
+            "alice requests bastion from 192.0.2.10",
+            wearNotificationText(challenge(pamService = "bastion", sourceIp = "192.0.2.10"))
+        )
+        assertEquals(
+            "alice requests bastion from 192.0.2.10\nRead disk health now",
+            wearNotificationText(challenge(sourceIp = "192.0.2.10").copy(reason = "Read disk\u202e health\nnow"))
+        )
+    }
+
+    @Test
+    fun readsTheRelayedReason() {
+        val payload = """{"type":"auth_request","data":{"id":"r1","username":"alice","system":"bastion","pam_service":"bastion","expires_at":"2099-01-01T00:00:00Z","reason":"Check backups"}}"""
+
+        assertEquals("Check backups", WearChallenge.fromPayload(payload).reason)
     }
 
     @Test

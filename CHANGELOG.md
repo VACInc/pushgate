@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Phone and watch approval notifications name the host once ("user requests host from address"); an optional request reason, when the server supplies one, shows on a second line.
+
 ## 1.0.2
 
 - Update the TLS trust bundle to certifi 2026.10.19.

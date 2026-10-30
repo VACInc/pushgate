@@ -15,14 +15,19 @@ internal data class NotificationEnrollmentBinding(
     val signingKeyAlias: String
 )
 
+/**
+ * One plain line naming who wants in, where, and from which address; the host is
+ * named once. The login service is not repeated here (clients now send the host
+ * name as the service too, which read as the host twice). A caller-supplied
+ * reason, when present, goes on a second line.
+ */
 internal fun notificationText(challenge: AuthChallenge): String {
     val user = safeDisplayText(challenge.username).ifBlank { "Unknown user" }
-    val service = safeDisplayText(challenge.pamService).ifBlank { "authentication" }.let {
-        if (it.equals("ssh", ignoreCase = true)) "sshd" else it
-    }
     val system = safeDisplayText(challenge.system).ifBlank { "unknown device" }
     val source = safeDisplayText(challenge.sourceIp).ifBlank { "unknown IP" }
-    return "$user requests $service on $system from $source"
+    val line = "$user requests $system from $source"
+    val reason = safeDisplayText(challenge.reason)
+    return if (reason.isEmpty()) line else "$line\n$reason"
 }
 
 /**

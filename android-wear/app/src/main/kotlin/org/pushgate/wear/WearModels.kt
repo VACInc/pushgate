@@ -61,7 +61,8 @@ data class WearChallenge(
     val geolocation: String?,
     val requestedAt: String?,
     val expiresAt: String,
-    val requireBiometric: Boolean
+    val requireBiometric: Boolean,
+    val reason: String? = null
 ) {
     companion object {
         fun fromPayload(payload: String): WearChallenge {
@@ -79,7 +80,8 @@ data class WearChallenge(
                 geolocation = optionalString(data, "geolocation") ?: detail?.let { optionalString(it, "geolocation") },
                 requestedAt = optionalString(data, "requested_at") ?: detail?.let { optionalString(it, "timestamp") } ?: optionalString(data, "created_at"),
                 expiresAt = data.optString("expires_at"),
-                requireBiometric = data.optBoolean("require_biometric", true)
+                requireBiometric = data.optBoolean("require_biometric", true),
+                reason = optionalString(data, "reason") ?: detail?.let { optionalString(it, "reason") }
             )
         }
 

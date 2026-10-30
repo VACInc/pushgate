@@ -154,12 +154,24 @@ internal fun isWearNotificationEnrollmentCurrent(
 ): Boolean = expectedSigningKeyAlias != null &&
     currentEnrollment?.signingKeyAlias == expectedSigningKeyAlias
 
+/** Same wording as the phone: host named once, optional reason on a second line. */
 internal fun wearNotificationText(challenge: WearChallenge): String {
     val user = challenge.username.ifBlank { "Unknown user" }
-    val service = challenge.pamService.ifBlank { "authentication" }.let {
-        if (it.equals("ssh", ignoreCase = true)) "sshd" else it
-    }
     val system = challenge.system.ifBlank { "unknown device" }
     val source = challenge.sourceIp?.takeIf { it.isNotBlank() } ?: "unknown IP"
-    return "$user requests $service on $system from $source"
+    val line = "$user requests $system from $source"
+    val reason = wearReasonText(challenge.reason)
+    return if (reason.isEmpty()) line else "$line\n$reason"
+}
+
+/** Flattens a caller-supplied reason to one bounded line with no control or bidi characters. */
+internal fun wearReasonText(value: String?, maxLength: Int = 160): String {
+    if (value == null) return ""
+    return buildString(value.length.coerceAtMost(maxLength)) {
+        value.forEach { character ->
+            val bidi = character == '\u061c' || character == '\u200e' || character == '\u200f' ||
+                character in '\u202a'..'\u202e' || character in '\u2066'..'\u2069'
+            append(if (character.isISOControl() || bidi) ' ' else character)
+        }
+    }.replace(Regex("\\s+"), " ").trim().take(maxLength)
 }
