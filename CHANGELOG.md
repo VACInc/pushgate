@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Phone Settings: Debug logging uses standard settings rows (a switch row, a "Keep logs for" picker, Share log) that fit at any font size. Screenshots and screen recording are allowed on every phone screen except the enrollment QR scanner.
 - Phone and watch approval notifications name the host once ("user requests host from address"); an optional request reason, when the server supplies one, shows on a second line.
 
 ## 1.0.2

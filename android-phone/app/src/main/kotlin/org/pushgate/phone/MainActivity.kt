@@ -11,7 +11,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import java.io.Closeable
-import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.getValue
@@ -57,7 +56,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         DebugLog.log(this, "screen", "App screen created" + if (savedInstanceState != null) " (restored)" else "")
         lastLeftAtMillis = uiPrefs().getLong(LAST_LEFT_AT, 0L)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         requestNotificationPermission()
         PendingDenialScheduler.ensureScheduled(this)
 

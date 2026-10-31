@@ -6,6 +6,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -23,6 +25,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -31,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BatteryAlert
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.ContentPaste
@@ -59,7 +65,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,6 +75,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -96,6 +102,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -467,6 +474,7 @@ private fun SettingsButton(label: String, icon: ImageVector, tag: String, enable
 @Composable
 private fun SettingsScreen(modifier: Modifier, state: PhoneUiState, actions: PhoneUiActions) {
     var confirmClear by remember { mutableStateOf(false) }
+    var pickRetention by remember { mutableStateOf(false) }
     val panels = state.panels
     val enrolled = state.enrollment != null
     Column(
@@ -509,40 +517,22 @@ private fun SettingsScreen(modifier: Modifier, state: PhoneUiState, actions: Pho
             }
         }
         SettingsSection("Debug logging", Icons.Rounded.BugReport) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Record debug log", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Saves what PushGate does on this phone so problems can be traced. " +
-                            "Turning it off deletes the whole log.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Switch(
-                    modifier = Modifier
-                        .testTag("debug_logging_switch")
-                        .semantics { contentDescription = "Record debug log" },
-                    checked = panels.debugLoggingEnabled,
-                    onCheckedChange = actions.onDebugLoggingChange
-                )
-            }
-            Text("Keep logs for", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                DebugLogPolicy.RETENTION_CHOICES.forEach { days ->
-                    FilterChip(
-                        modifier = Modifier.testTag("retention_$days"),
-                        selected = panels.retentionDays == days,
-                        onClick = { actions.onRetentionChange(days) },
-                        label = { Text(if (days == 1) "1 day" else "$days days") }
-                    )
-                }
-            }
-            Text(
-                if (panels.debugLoggingEnabled) "Log size: ${formatBytes(panels.debugLogBytes)}" else "Logging is off. Nothing is stored.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            SettingsSwitchRow(
+                title = "Record debug log",
+                summary = if (panels.debugLoggingEnabled) {
+                    "On. Log size: ${formatBytes(panels.debugLogBytes)}. Turning it off deletes the whole log."
+                } else {
+                    "Off. Nothing is stored. When on, saves what PushGate does on this phone so problems can be traced."
+                },
+                tag = "debug_logging_switch",
+                checked = panels.debugLoggingEnabled,
+                onCheckedChange = actions.onDebugLoggingChange
+            )
+            SettingsPickerRow(
+                title = "Keep logs for",
+                value = retentionLabel(panels.retentionDays),
+                tag = "retention_row",
+                onClick = { pickRetention = true }
             )
             SettingsButton("Share log", Icons.Rounded.Share, "share_log_button", enabled = panels.debugLoggingEnabled, onClick = actions.onShareLogs)
         }
@@ -576,6 +566,90 @@ private fun SettingsScreen(modifier: Modifier, state: PhoneUiState, actions: Pho
                 TextButton(modifier = Modifier.testTag("cancel_clear_button"), onClick = { confirmClear = false }) { Text("Cancel") }
             }
         )
+    }
+    if (pickRetention) {
+        AlertDialog(
+            modifier = Modifier.testTag("retention_dialog"),
+            onDismissRequest = { pickRetention = false },
+            title = { Text("Keep logs for") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .selectableGroup()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    DebugLogPolicy.RETENTION_CHOICES.forEach { days ->
+                        val selected = panels.retentionDays == days
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("retention_$days")
+                                .selectable(
+                                    selected = selected,
+                                    role = Role.RadioButton,
+                                    onClick = {
+                                        pickRetention = false
+                                        actions.onRetentionChange(days)
+                                    }
+                                ),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = selected, onClick = null)
+                            Spacer(Modifier.width(16.dp))
+                            Text(retentionLabel(days), style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(modifier = Modifier.testTag("retention_cancel"), onClick = { pickRetention = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+internal fun retentionLabel(days: Int): String = if (days == 1) "1 day" else "$days days"
+
+/** Standard Material settings row: title and summary on the left, switch on the right; the whole row toggles. */
+@Composable
+private fun SettingsSwitchRow(title: String, summary: String, tag: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .testTag(tag)
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(16.dp))
+        Switch(checked = checked, onCheckedChange = null)
+    }
+}
+
+/** Standard Material picker row: title with the current value below it; tapping opens a choice dialog. */
+@Composable
+private fun SettingsPickerRow(title: String, value: String, tag: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .testTag(tag)
+            .clickable(role = Role.Button, onClickLabel = "Change", onClick = onClick)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(16.dp))
+        Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

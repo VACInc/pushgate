@@ -17,6 +17,8 @@ import kotlin.math.min
 class QrCaptureActivity : CaptureActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The only screen that blocks screenshots: the camera preview shows the one-time
+        // enrollment code. Home, Settings, History and the approval screens allow capture.
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
     }
 
