@@ -1,0 +1,11 @@
+{
+  "name": "push-text",
+  "sources": [
+    "server/app/push_text.py"
+  ],
+  "test_cmd": "python -m pytest -q -x qa/test_push_text.py -p no:cacheprovider",
+  "timeout_s": 60,
+  "language": "python",
+  "baseline_score": 1.0,
+  "notes": "The approval line formatter: configured display names, SSH service labels, broker consent, host-as-service, placeholders, one line."
+}

@@ -1,0 +1,15 @@
+{
+  "name": "push-text-wiring",
+  "sources": [
+    "server/app/main.py",
+    "server/app/push.py"
+  ],
+  "test_cmd": "python -m pytest -q -x qa/test_push_text.py qa/test_source_names.py qa/test_push_delivery_recovery.py -p no:cacheprovider",
+  "timeout_s": 120,
+  "language": "python",
+  "exclude_lines": [
+    "^(?!.*push_text).*"
+  ],
+  "baseline_score": 1.0,
+  "notes": "Mutate only the lines that put push_text in the event, the log line, the trimmed UnifiedPush body and the ntfy wake-up."
+}

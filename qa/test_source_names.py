@@ -442,7 +442,7 @@ class ListHandler(logging.Handler):
 
 
 def test_login_from_an_address_reaches_the_phone_as_the_machine_name(tmp_path: Path, dns: FakeDns) -> None:
-    app = make_app(tmp_path, dns)
+    app = make_app(tmp_path, dns, display_users="serviceuser:Service User")
     push = RecordingPushProvider()
     source_log = logging.getLogger("pushgate.source")
     captured = ListHandler()
@@ -453,8 +453,8 @@ def test_login_from_an_address_reaches_the_phone_as_the_machine_name(tmp_path: P
         source_log.removeHandler(captured)
     texts = captured.lines
     assert source_log.propagate is False  # one line per event even when the root logger has a handler
-    assert any(t.startswith("push_text ") and t.endswith(f"text=serviceuser requests SSH access on server02 from {CLIENT_NAME}") for t in texts)
-    assert any(t.endswith(f"from {UNKNOWN_IP}") for t in texts)
+    assert any(t.startswith("push_text ") and t.endswith(f"text=Service User requests SSH from {CLIENT_NAME} to server02") for t in texts)
+    assert any(t.endswith(f"text=Service User requests SSH from {UNKNOWN_IP} to server02") for t in texts)
 
 
 def run_named_logins(app, push) -> None:
@@ -472,6 +472,11 @@ def run_named_logins(app, push) -> None:
         payloads = wait_for_push_count(push, device["id"], 3)
 
         shown = {p["data"]["id"]: p["data"]["source_ip"] for p in payloads}
+        # The phone and watch show the server's line as it is.
+        text = {p["data"]["id"]: p["data"]["push_text"] for p in payloads}
+        assert text[named.json()["data"]["id"]] == f"Service User requests SSH from {CLIENT_NAME} to server02"
+        assert text[unknown.json()["data"]["id"]] == f"Service User requests SSH from {UNKNOWN_IP} to server02"
+        assert text[sent_name.json()["data"]["id"]] == "Service User requests SSH from server03 to server02"
         assert shown[named.json()["data"]["id"]] == CLIENT_NAME
         assert shown[unknown.json()["data"]["id"]] == UNKNOWN_IP  # unresolvable: the address, as before
         assert shown[sent_name.json()["data"]["id"]] == "server03"  # helper already named it: unchanged

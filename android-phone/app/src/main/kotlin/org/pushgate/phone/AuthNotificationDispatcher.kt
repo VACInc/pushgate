@@ -16,18 +16,33 @@ internal data class NotificationEnrollmentBinding(
 )
 
 /**
- * One plain line naming who wants in, where, and from which address; the host is
- * named once. The login service is not repeated here (clients now send the host
- * name as the service too, which read as the host twice). A caller-supplied
- * reason, when present, goes on a second line.
+ * One plain line, `<user> requests <service> from <source> to <host>`
+ * ("Agent requests SSH from workstation to server01"). The server builds it (`push_text`), so the
+ * wording changes without an app update; an older server gets the same line built here.
+ * Never a reason or a second line.
  */
-internal fun notificationText(challenge: AuthChallenge): String {
-    val user = safeDisplayText(challenge.username).ifBlank { "Unknown user" }
-    val system = safeDisplayText(challenge.system).ifBlank { "unknown device" }
-    val source = safeDisplayText(challenge.sourceIp).ifBlank { "unknown IP" }
-    val line = "$user requests $system from $source"
-    val reason = safeDisplayText(challenge.reason)
-    return if (reason.isEmpty()) line else "$line\n$reason"
+internal fun notificationText(challenge: AuthChallenge): String =
+    safeDisplayText(challenge.pushText).ifBlank { localPushText(challenge) }
+
+internal fun localPushText(challenge: AuthChallenge): String {
+    val login = safeDisplayText(challenge.username)
+    val user = login.ifBlank { "Unknown user" }
+    val system = safeDisplayText(challenge.system)
+    val service = displayService(safeDisplayText(challenge.pamService), login, system)
+    val source = safeDisplayText(challenge.sourceIp).ifBlank { "unknown source" }
+    return "$user requests $service from $source to ${system.ifBlank { "unknown host" }}"
+}
+
+/** SSH login labels read "SSH"; any other service keeps its name (same rules as the server). */
+internal fun displayService(service: String, login: String, system: String): String {
+    val lowered = service.lowercase()
+    if (service.isEmpty()) return "access"
+    if (lowered in setOf("ssh access", "sshd", "ssh") || lowered == system.lowercase()) return "SSH"
+    if (lowered == "ssh as" || lowered.startsWith("ssh as ")) {
+        val target = service.substring("ssh as".length).trim()
+        return if (target.isEmpty() || target.equals(login, ignoreCase = true)) "SSH" else "SSH as $target"
+    }
+    return service
 }
 
 /**
@@ -228,6 +243,7 @@ internal class AuthNotificationDispatcher(private val context: Context) {
             .putExtra(EXTRA_REQUESTED_AT, challenge.requestedAt)
             .putExtra(EXTRA_EXPIRES_AT, challenge.expiresAt)
             .putExtra(EXTRA_REQUIRE_BIOMETRIC, challenge.requireBiometric)
+            .putExtra(EXTRA_PUSH_TEXT, challenge.pushText)
             .putExtra(EXTRA_DEVICE_ID, binding.deviceId)
             .putExtra(EXTRA_SIGNING_KEY_ALIAS, binding.signingKeyAlias)
 
@@ -250,6 +266,7 @@ internal class AuthNotificationDispatcher(private val context: Context) {
         const val EXTRA_REQUESTED_AT = "requested_at"
         const val EXTRA_EXPIRES_AT = "expires_at"
         const val EXTRA_REQUIRE_BIOMETRIC = "require_biometric"
+        const val EXTRA_PUSH_TEXT = "push_text"
         const val EXTRA_DEVICE_ID = "device_id"
         const val EXTRA_SIGNING_KEY_ALIAS = "signing_key_alias"
         private const val NOTIFICATION_ID = 1
@@ -280,7 +297,8 @@ internal class AuthNotificationDispatcher(private val context: Context) {
                 geolocation = intent.getStringExtra(EXTRA_GEOLOCATION),
                 requestedAt = intent.getStringExtra(EXTRA_REQUESTED_AT),
                 expiresAt = intent.getStringExtra(EXTRA_EXPIRES_AT).orEmpty(),
-                requireBiometric = intent.getBooleanExtra(EXTRA_REQUIRE_BIOMETRIC, true)
+                requireBiometric = intent.getBooleanExtra(EXTRA_REQUIRE_BIOMETRIC, true),
+                pushText = intent.getStringExtra(EXTRA_PUSH_TEXT)
             )
         }
     }

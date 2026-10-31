@@ -28,6 +28,7 @@ from .delivery_watch import UnansweredWatch
 from .ephemeral import build_auth_state
 from .models import ApiKey, AuditLog, AuthLogEntry, AuthRequest, BackupCode, Device, DeviceNonce, Group, Integration, Nonce, Policy, ProvisionerScope, ProvisionedIntegration, Role, Setting, User, UserGroup, now
 from .source_names import LOG as SOURCE_LOG, ensure_log_handler, resolver_from_settings
+from .push_text import parse_display_users, push_text
 from .push import FanoutDisconnected, build_push_fanout, build_push_provider, unifiedpush_endpoint_allowed
 from .security import (
     DEVICE_KEY_TYPE_ED25519,
@@ -302,6 +303,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.auth_state = build_auth_state(settings.redis_url)
     app.state.unanswered_watch = UnansweredWatch()
     app.state.source_names = resolver_from_settings(settings)
+    app.state.display_users = parse_display_users(settings.display_users)
     if app.state.source_names.enabled:
         ensure_log_handler()
     app.state.push_fanout = build_push_fanout(settings.redis_url)
@@ -704,6 +706,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         data = obj(auth_req)
         detail = auth_req.detail if isinstance(auth_req.detail, dict) else {}
         data["source_ip"] = display_source(auth_req)
+        data["push_text"] = push_text(
+            auth_req.username, auth_req.pam_service, data["source_ip"], auth_req.system, app.state.display_users
+        )
         data["geolocation"] = detail.get("geolocation")
         data["approver_username"] = detail.get("approver_username") or auth_req.username
         requested_at = detail.get("timestamp")
@@ -2200,12 +2205,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         emit_auth_syslog(auth_req)
         if auth_req.status == "pending":
             SOURCE_LOG.info(
-                "push_text request=%s text=%s requests %s on %s from %s",
+                "push_text request=%s text=%s",
                 auth_req.id[:8],
-                auth_req.username,
-                auth_req.pam_service,
-                auth_req.system,
-                display_source(auth_req) or "-",
+                push_text(
+                    auth_req.username, auth_req.pam_service, display_source(auth_req), auth_req.system, app.state.display_users
+                ),
             )
             devices = db.scalars(
                 select(Device).where(Device.user_id == approver_user.id, Device.revoked.is_(False), Device.public_key.is_not(None))

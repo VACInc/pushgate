@@ -83,6 +83,26 @@ to the same address; among several, the shortest wins. The name is display only:
 request dedupe and trusted sessions keep the value the helper sent, the auth log
 keeps the raw `source_ip` and records the shown name as `detail.source_name`.
 Addresses seen in the last week are looked up at startup. Each new pending request
-logs one `pushgate.source` line, `push_text request=<id> text=<user> requests
-<service> on <system> from <source>`, so the shown text can be checked in the
-server log.
+logs one `pushgate.source` line, `push_text request=<id> text=<approval line>`, so
+the shown text can be checked in the server log.
+
+## Approval line
+
+Every request notification is one line, built by the server and sent to the phone
+and watch as `push_text` (the ntfy wake-up uses it as its body):
+
+`<user> requests <service> from <source> to <system>`, for example
+`Agent requests SSH from workstation to server01`.
+
+- `<user>` is the login, or its configured display name (below).
+- `<service>`: `SSH access`, `sshd`, `ssh`, a service equal to the system name, and
+  `SSH as <login>` for the requester's own login all read `SSH`; `SSH as <other>`
+  stays; any other service keeps its name; an empty one reads `access`.
+- `<source>` is the requester name above, else the address the helper sent.
+- `<system>` is the host label the helper sent.
+
+There is no reason or second line. Apps that predate `push_text` build their own text.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `PUSHGATE_DISPLAY_USERS` | empty | Comma list of `login:Shown`, for example `agent:Agent`. Logins match case-insensitively; other logins are shown as they are. |

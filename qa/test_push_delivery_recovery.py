@@ -143,12 +143,18 @@ def test_ntfy_wakeup_posts_one_bounded_notification_without_request_identifiers(
     assert len(posts) == 1
     post = posts[0]
     assert str(post.url) == "https://ntfy.example/pushgate"
-    assert post.headers["Title"] == "PushGate: approve serviceuser@server02"
+    assert "Title" not in post.headers
     assert post.headers["Priority"] == "high"
     assert post.headers["Authorization"] == "Bearer tk_test"
     body = post.content.decode()
-    assert "Open the PushGate app" in body and "serviceuser@server02" in body and "192.0.2.5" in body
+    # No server line in the event: the same line without configured display names.
+    assert body == "serviceuser requests SSH from 192.0.2.5 to server02"
     assert "request-secret-id" not in body
+
+    # The server's line wins.
+    payload["data"]["push_text"] = "Service User requests SSH from server01 to server02"
+    asyncio.run(provider.notify_auth_request([{"id": "phone-1", "push_token": None}], payload))
+    assert posts[1].content.decode() == "Service User requests SSH from server01 to server02"
 
     # Composition: FCM stays inside when configured; nothing without a URL.
     assert isinstance(build_push_provider(None, None, "x").inner, NoopPushProvider)

@@ -4,7 +4,7 @@
 
 - Server-side requester names: with `PUSHGATE_SOURCE_NAME_SUFFIX` set, a raw client address in `source_ip` is shown as the shortest forward-confirmed PTR machine name under that suffix, for every helper. Cached, prewarmed, capped at `PUSHGATE_SOURCE_NAME_TIMEOUT_MS` (300 ms) per login; explicit resolvers or the system resolver. Display only: dedupe and trusted sessions keep the value the helper sent. See docs/configuration.md.
 - Phone Settings: Debug logging uses standard settings rows (a switch row, a "Keep logs for" picker, Share log) that fit at any font size. Screenshots and screen recording are allowed on every phone screen except the enrollment QR scanner.
-- Phone and watch approval notifications name the host once ("user requests host from address"); an optional request reason, when the server supplies one, shows on a second line.
+- Approval line: every request notification is one server-built line, `<user> requests <service> from <source> to <host>` (for example "Agent requests SSH from workstation to server01"), sent to the phone and watch as `push_text` and used as the ntfy wake-up body (no title, no approver). `PUSHGATE_DISPLAY_USERS` (`login:Shown` list) sets display names; `SSH access`, `sshd`, `ssh` and a service equal to the host read `SSH`; other services keep their name. Phone and watch show `push_text` as it is and build the same line for older servers. No reason line and no second line. See docs/configuration.md.
 
 ## 1.0.2
 

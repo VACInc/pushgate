@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from .push_text import push_text
+
 try:
     import redis.asyncio as aioredis
     from redis.exceptions import RedisError
@@ -242,20 +244,11 @@ class NtfyWakeupProvider(PushProvider):
         inner = await self.inner.notify_auth_request(devices, payload)
         data = payload.get("data") if isinstance(payload, dict) else None
         data = data if isinstance(data, dict) else {}
-        username = str(data.get("username") or "?")
-        approver = str(data.get("approver_username") or username)
-        system = str(data.get("system") or "?")
-        service = str(data.get("pam_service") or "")
-        source = str(data.get("source_ip") or "")
-        title = f"PushGate: approve {username}@{system}"
-        body = f"Open the PushGate app to approve {username}@{system}"
-        if service:
-            body += f" ({service})"
-        if source:
-            body += f" from {source}"
-        body += f". Approver: {approver}."
+        text = str(data.get("push_text") or "") or push_text(
+            data.get("username"), data.get("pam_service"), data.get("source_ip"), data.get("system")
+        )
+        body = text
         headers = {
-            "Title": title,
             "Priority": self.priority,
             "Tags": "key,pushgate",
         }
@@ -308,7 +301,7 @@ def unifiedpush_body(device_id: str, payload: dict[str, Any]) -> bytes:
     wire = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
     if len(wire) <= UNIFIEDPUSH_MAX_BYTES:
         return wire
-    keep = ("id", "username", "approver_username", "system", "pam_service", "source_ip", "status",
+    keep = ("id", "username", "approver_username", "system", "pam_service", "source_ip", "push_text", "status",
             "created_at", "expires_at", "requested_at", "require_biometric", "device_id")
     trimmed = {k: data[k] for k in keep if k in data}
     body["payload"] = json.dumps({"type": "auth_request", "data": trimmed}, sort_keys=True, separators=(",", ":"))

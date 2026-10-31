@@ -7,38 +7,39 @@ import org.junit.Test
 
 class WearAuthNotificationDispatcherTest {
     @Test
-    fun formatsConcisePushGateRequest() {
+    fun showsTheServerLineAsItIs() {
+        val payload = """{"type":"auth_request","data":{"id":"r1","username":"agent","system":"bastion","pam_service":"SSH access","source_ip":"workstation","expires_at":"2099-01-01T00:00:00Z","push_text":"Agent requests SSH from workstation to bastion"}}"""
+
+        assertEquals("Agent requests SSH from workstation to bastion", wearNotificationText(WearChallenge.fromPayload(payload)))
         assertEquals(
-            "alice requests bastion from 192.0.2.10",
-            wearNotificationText(challenge(pamService = "ssh", sourceIp = "192.0.2.10"))
+            "Agent requests SSH Approved from x to y",
+            wearNotificationText(challenge().copy(pushText = "Agent requests SSH\nApproved\u202e from x to y"))
         )
+    }
+
+    @Test
+    fun buildsTheSameLineWhenTheServerSendsNone() {
+        assertEquals("alice requests SSH from 192.0.2.10 to bastion", wearNotificationText(challenge(pamService = "ssh", sourceIp = "192.0.2.10")))
+        assertEquals("alice requests SSH from 192.0.2.10 to bastion", wearNotificationText(challenge(pamService = "SSH access", sourceIp = "192.0.2.10")))
+        assertEquals("alice requests SSH from 192.0.2.10 to bastion", wearNotificationText(challenge(pamService = "bastion", sourceIp = "192.0.2.10")))
+        assertEquals("alice requests sudo from 192.0.2.10 to bastion", wearNotificationText(challenge(pamService = "sudo", sourceIp = "192.0.2.10")))
+        assertEquals("alice requests SSH as root from 192.0.2.10 to bastion", wearNotificationText(challenge(pamService = "SSH as root", sourceIp = "192.0.2.10")))
+        assertEquals("alice requests SSH from 192.0.2.10 to bastion", wearNotificationText(challenge(pamService = "SSH as alice", sourceIp = "192.0.2.10")))
     }
 
     @Test
     fun usesSafeLabelsForMissingFields() {
         assertEquals(
-            "Unknown user requests unknown device from unknown IP",
+            "Unknown user requests access from unknown source to unknown host",
             wearNotificationText(challenge(username = "", pamService = "", system = "", sourceIp = ""))
         )
     }
 
     @Test
-    fun namesTheHostOnceAndPutsAReasonOnASecondLine() {
-        assertEquals(
-            "alice requests bastion from 192.0.2.10",
-            wearNotificationText(challenge(pamService = "bastion", sourceIp = "192.0.2.10"))
-        )
-        assertEquals(
-            "alice requests bastion from 192.0.2.10\nRead disk health now",
-            wearNotificationText(challenge(sourceIp = "192.0.2.10").copy(reason = "Read disk\u202e health\nnow"))
-        )
-    }
+    fun neverShowsAReasonLine() {
+        val payload = """{"type":"auth_request","data":{"id":"r1","username":"alice","system":"bastion","pam_service":"SSH access","source_ip":"192.0.2.10","expires_at":"2099-01-01T00:00:00Z","reason":"Check backups","detail":{"reason":"Check backups"}}}"""
 
-    @Test
-    fun readsTheRelayedReason() {
-        val payload = """{"type":"auth_request","data":{"id":"r1","username":"alice","system":"bastion","pam_service":"bastion","expires_at":"2099-01-01T00:00:00Z","reason":"Check backups"}}"""
-
-        assertEquals("Check backups", WearChallenge.fromPayload(payload).reason)
+        assertEquals("alice requests SSH from 192.0.2.10 to bastion", wearNotificationText(WearChallenge.fromPayload(payload)))
     }
 
     @Test

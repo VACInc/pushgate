@@ -1,102 +1,116 @@
 package org.pushgate.phone
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class AuthNotificationTextTest {
     @Test
-    fun formatsCompactSshRequest() {
-        val challenge = AuthChallenge(
-            id = "request-1",
-            username = "alice",
-            system = "gateway-1",
-            pamService = "ssh",
-            sourceIp = "192.0.2.10",
-            geolocation = "Example City",
-            requestedAt = "2026-07-21T15:00:00Z",
-            expiresAt = "2026-07-21T15:01:00Z",
-            requireBiometric = true
-        )
+    fun showsTheServerLineAsItIs() {
+        val challenge = challenge(pushText = "Agent requests SSH from workstation to server01")
 
+        assertEquals("Agent requests SSH from workstation to server01", notificationText(challenge))
+    }
+
+    @Test
+    fun buildsTheSameLineWhenTheServerSendsNone() {
+        assertEquals("alice requests SSH from 192.0.2.10 to gateway-1", notificationText(challenge(username = "alice", system = "gateway-1", pamService = "SSH access")))
+        assertEquals("alice requests SSH from 192.0.2.10 to gateway-1", notificationText(challenge(username = "alice", system = "gateway-1", pamService = "sshd")))
+        assertEquals("alice requests SSH from 192.0.2.10 to gateway-1", notificationText(challenge(username = "alice", system = "gateway-1", pamService = "ssh")))
+    }
+
+    @Test
+    fun unknownServiceKeepsItsName() {
+        assertEquals("alice requests sudo from 192.0.2.10 to server01", notificationText(challenge(username = "alice", pamService = "sudo")))
+        assertEquals("alice requests access from 192.0.2.10 to server01", notificationText(challenge(username = "alice", pamService = "")))
+    }
+
+    @Test
+    fun consentServiceNamesOnlyAnotherLoginUser() {
+        assertEquals("svc requests SSH from 192.0.2.10 to server01", notificationText(challenge(username = "svc", pamService = "SSH as svc")))
+        assertEquals("svc requests SSH as root from 192.0.2.10 to server01", notificationText(challenge(username = "svc", pamService = "SSH as root")))
+    }
+
+    @Test
+    fun namesTheHostOnceWhenTheServiceIsTheHostName() {
+        assertEquals("serviceuser requests SSH from 192.0.2.10 to server01", notificationText(challenge(system = "server01", pamService = "server01")))
+    }
+
+    @Test
+    fun placeholdersForMissingFields() {
         assertEquals(
-            "alice requests gateway-1 from 192.0.2.10",
-            notificationText(challenge)
+            "Unknown user requests SSH from unknown source to unknown host",
+            notificationText(challenge(username = "", system = "", pamService = "SSH access", sourceIp = null))
         )
     }
 
     @Test
     fun stripsPromptSpoofingControlsAndBidiFormatting() {
-        val challenge = AuthChallenge(
-            id = "request-1",
+        val challenge = challenge(
             username = "alice\nadmin",
-            system = "gateway\u202Etxt.exe",
-            pamService = "ss\u2066h",
-            sourceIp = "192.0.2.10\rTrusted",
-            geolocation = null,
-            requestedAt = null,
-            expiresAt = "2099-01-01T00:00:00Z",
-            requireBiometric = true
+            system = "gateway‮txt.exe",
+            pamService = "ss⁦h",
+            sourceIp = "192.0.2.10\rTrusted"
         )
 
-        assertEquals(
-            "alice admin requests gateway txt.exe from 192.0.2.10 Trusted",
-            notificationText(challenge)
-        )
+        assertEquals("alice admin requests ss h from 192.0.2.10 Trusted to gateway txt.exe", notificationText(challenge))
+        val spoofed = notificationText(challenge(pushText = "Agent requests SSH\nApproved‮ from x to y"))
+        assertFalse(spoofed.contains('\n'))
+        assertEquals("Agent requests SSH Approved from x to y", spoofed)
     }
 
     @Test
-    fun namesTheHostOnceWhenTheServiceIsTheHostName() {
-        val challenge = challenge(system = "server01", pamService = "server01")
-
-        assertEquals("serviceuser requests server01 from 192.0.2.10", notificationText(challenge))
-    }
-
-    @Test
-    fun putsAGivenReasonOnASecondLine() {
-        val challenge = challenge(reason = "Read disk health\nnow")
-
-        assertEquals(
-            "serviceuser requests server01 from 192.0.2.10\nRead disk health now",
-            notificationText(challenge)
-        )
-    }
-
-    @Test
-    fun readsTheReasonFromTheServerEventDetail() {
+    fun neverAddsAReasonLine() {
         val json = org.json.JSONObject()
             .put("id", "request-1")
             .put("username", "serviceuser")
             .put("system", "server01")
-            .put("pam_service", "server01")
+            .put("pam_service", "SSH access")
             .put("source_ip", "192.0.2.10")
             .put("expires_at", "2099-01-01T00:00:00Z")
+            .put("reason", "Check backups")
             .put("detail", org.json.JSONObject().put("reason", "Check backups"))
 
+        assertEquals("serviceuser requests SSH from 192.0.2.10 to server01", notificationText(AuthChallenge.fromJson(json)))
+    }
+
+    @Test
+    fun serverLineRidesToTheWatch() {
+        val json = org.json.JSONObject()
+            .put("id", "request-1")
+            .put("username", "serviceuser")
+            .put("system", "server01")
+            .put("pam_service", "SSH access")
+            .put("source_ip", "192.0.2.10")
+            .put("expires_at", "2099-01-01T00:00:00Z")
+            .put("push_text", "Agent requests SSH from workstation to server01")
+        val challenge = AuthChallenge.fromJson(json)
+
+        assertEquals("Agent requests SSH from workstation to server01", challenge.pushText)
         assertEquals(
-            "serviceuser requests server01 from 192.0.2.10\nCheck backups",
-            notificationText(AuthChallenge.fromJson(json))
+            "Agent requests SSH from workstation to server01",
+            org.json.JSONObject(PhoneWearRelayProtocol.challengePayload(challenge))
+                .getJSONObject("data").getString("push_text")
         )
-        assertEquals(
-            "Check backups",
-            org.json.JSONObject(PhoneWearRelayProtocol.challengePayload(AuthChallenge.fromJson(json)))
-                .getJSONObject("data").getString("reason")
-        )
+        assertFalse(org.json.JSONObject(PhoneWearRelayProtocol.challengePayload(challenge)).getJSONObject("data").has("reason"))
     }
 
     private fun challenge(
+        username: String = "serviceuser",
         system: String = "server01",
-        pamService: String = "server01",
-        reason: String? = null
+        pamService: String = "SSH access",
+        sourceIp: String? = "192.0.2.10",
+        pushText: String? = null
     ) = AuthChallenge(
         id = "request-1",
-        username = "serviceuser",
+        username = username,
         system = system,
         pamService = pamService,
-        sourceIp = "192.0.2.10",
+        sourceIp = sourceIp,
         geolocation = null,
         requestedAt = null,
         expiresAt = "2099-01-01T00:00:00Z",
         requireBiometric = true,
-        reason = reason
+        pushText = pushText
     )
 }

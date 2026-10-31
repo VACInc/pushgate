@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     source_name_query_timeout_ms: int = _setting("SOURCE_NAME_QUERY_TIMEOUT_MS", 1000, ge=50, le=10000)
     source_name_ttl_seconds: int = _setting("SOURCE_NAME_TTL_SECONDS", 3600, ge=1, le=604800)
     source_name_negative_ttl_seconds: int = _setting("SOURCE_NAME_NEGATIVE_TTL_SECONDS", 60, ge=1, le=86400)
+    # Approval line ("<USER> requests SSH from <source> to <host>"): logins shown under another
+    # name, as a comma list of login:Shown (e.g. "svc:Service"). Logins match case-insensitively;
+    # everyone else is shown by login.
+    display_users: str = _setting("DISPLAY_USERS", "")
     rate_limit_per_minute: int = _setting("RATE_LIMIT_PER_MINUTE", 600, ge=1, le=100000)
     rate_limit_window_seconds: int = _setting("RATE_LIMIT_WINDOW_SECONDS", 60, ge=1, le=3600)
     static_dir: str | None = _setting("STATIC_DIR", None)
@@ -112,6 +116,14 @@ class Settings(BaseSettings):
         from .source_names import parse_resolvers
 
         parse_resolvers(value)
+        return value
+
+    @field_validator("display_users")
+    @classmethod
+    def validate_display_users(cls, value: str) -> str:
+        from .push_text import parse_display_users
+
+        parse_display_users(value)
         return value
 
     @field_validator("bootstrap_token")

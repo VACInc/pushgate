@@ -29,6 +29,7 @@ internal data class PendingDenial(
         .put("requested_at", challenge.requestedAt)
         .put("expires_at", challenge.expiresAt)
         .put("require_biometric", challenge.requireBiometric)
+        .put("push_text", challenge.pushText)
         .put("device_id", binding.deviceId)
         .put("signing_key_alias", binding.signingKeyAlias)
         .toString()
