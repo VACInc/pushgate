@@ -42,6 +42,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -185,6 +186,7 @@ fun PushGateWearApp(
 
                 state.screen == WearScreen.Settings -> WearSettingsScreen(
                     state = state,
+                    onRestartConnection = onStartListening,
                     onClearEnrollment = onClearEnrollment,
                     onOpenEnrollment = onOpenEnrollment,
                     onOpenHome = onOpenHome
@@ -192,7 +194,6 @@ fun PushGateWearApp(
 
                 else -> WearHomeScreen(
                     state = state,
-                    onStartListening = onStartListening,
                     onOpenSettings = onOpenSettings
                 )
             }
@@ -407,9 +408,9 @@ private fun WearEnrollmentScreen(
 }
 
 @Composable
+/** Status plus the way into Settings; restart, re-enroll and clear live in Settings, like the phone. */
 private fun WearHomeScreen(
     state: WearUiState,
-    onStartListening: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     WearFrame {
@@ -419,14 +420,6 @@ private fun WearHomeScreen(
             AnimatedVisibility(visible = state.decisionFeedback != null) {
                 state.decisionFeedback?.let { WearDecisionFeedbackCard(it) }
             }
-        }
-        item {
-            WearSecondaryChip(
-                label = "Start push listener",
-                icon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
-                tag = "wear_start_listener_button",
-                onClick = onStartListening
-            )
         }
         item {
             WearPrimaryChip(
@@ -495,13 +488,48 @@ private fun WearChallengeScreen(
 @Composable
 private fun WearSettingsScreen(
     state: WearUiState,
+    onRestartConnection: () -> Unit,
     onClearEnrollment: () -> Unit,
     onOpenEnrollment: () -> Unit,
     onOpenHome: () -> Unit
 ) {
+    var confirmClear by remember { mutableStateOf(false) }
+    if (confirmClear) {
+        WearFrame {
+            item { WearHeader(title = "Clear enrollment?", subtitle = "Unpairs this watch until it is enrolled again") }
+            item {
+                WearDangerChip(
+                    label = "Clear enrollment",
+                    icon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
+                    tag = "wear_confirm_clear_button",
+                    onClick = {
+                        confirmClear = false
+                        onClearEnrollment()
+                    }
+                )
+            }
+            item {
+                WearSecondaryChip(
+                    label = "Cancel",
+                    icon = { Icon(Icons.Rounded.Home, contentDescription = null) },
+                    tag = "wear_cancel_clear_button",
+                    onClick = { confirmClear = false }
+                )
+            }
+        }
+        return
+    }
     WearFrame {
         item { WearHeader(title = "Settings", subtitle = "PushGate") }
         item { WearProtectedCard(state) }
+        item {
+            WearSecondaryChip(
+                label = "Restart connection",
+                icon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
+                tag = "wear_restart_button",
+                onClick = onRestartConnection
+            )
+        }
         item {
             WearPrimaryChip(
                 label = "Re-enroll",
@@ -523,7 +551,7 @@ private fun WearSettingsScreen(
                 label = "Clear enrollment",
                 icon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
                 tag = "wear_clear_enrollment_button",
-                onClick = onClearEnrollment
+                onClick = { confirmClear = true }
             )
         }
         item { WearStatus(state.statusMessage) }

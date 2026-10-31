@@ -127,10 +127,20 @@ class PhoneWearRelay(
         val enrollment = activeEnrollment ?: return
         runCatching { PhoneWearRelayProtocol.decisionFromPayload(event.data) }
             .onSuccess { decision ->
+                if (SettledRequestStore.contains(context, decision.requestId)) {
+                    // Already decided on this phone; the server would only answer first-response-wins.
+                    sendDecisionResult(event.sourceNodeId, decision.requestId, Result.success(ALREADY_DECIDED_BODY))
+                    return@onSuccess
+                }
                 client.postDecisionBody(enrollment, decision.requestId, decision.body) { result ->
                     sendDecisionResult(event.sourceNodeId, decision.requestId, result)
                     result
-                        .onSuccess { onStatus("Wear decision relayed") }
+                        .onSuccess {
+                            relayedDecisionKind(decision.body)?.let { kind ->
+                                ChallengeResolutions.settledHere(context, decision.requestId, kind)
+                            }
+                            onStatus("Wear decision relayed")
+                        }
                         .onFailure(onError)
                 }
             }
@@ -147,8 +157,20 @@ class PhoneWearRelay(
         }.onFailure(onError)
     }
 
+    private companion object {
+        const val ALREADY_DECIDED_BODY = "{\"first_response_wins\":true}"
+    }
+
     override fun close() {
         runCatching { Wearable.getMessageClient(context).removeListener(this) }
         activeEnrollment = null
     }
 }
+
+/** The decision a relayed watch body carries, or null when it names neither approve nor deny. */
+internal fun relayedDecisionKind(body: String): Decision? =
+    when (runCatching { org.json.JSONObject(body).optString("decision") }.getOrNull()) {
+        "approve", "approved" -> Decision.Approve
+        "deny", "denied" -> Decision.Deny
+        else -> null
+    }

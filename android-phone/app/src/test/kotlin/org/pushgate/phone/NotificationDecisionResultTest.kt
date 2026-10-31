@@ -29,4 +29,26 @@ class NotificationDecisionResultTest {
 
         assertEquals(listOf("retain"), events)
     }
+
+    @Test
+    fun alreadySettledApproveIsNotRetryable() {
+        val failure = approveFailure(DecisionResponseException("x", "timeout"), stillActionable = true)
+
+        assertEquals(ApproveFailure("Not approved: request was already timeout.", retryable = false), failure)
+    }
+
+    @Test
+    fun expiredApproveIsNotRetryable() {
+        val failure = approveFailure(java.io.IOException("offline"), stillActionable = false)
+
+        assertEquals(false, failure.retryable)
+        assertEquals("Not approved: request expired.", failure.message)
+    }
+
+    @Test
+    fun transportFailureOnLiveRequestIsRetryable() {
+        val failure = approveFailure(java.io.IOException("offline"), stillActionable = true)
+
+        assertEquals(true, failure.retryable)
+    }
 }

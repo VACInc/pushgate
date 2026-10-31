@@ -19,7 +19,11 @@ object UnifiedPushRegistration {
     fun ensureRegistered(context: Context): String? {
         val available = UnifiedPush.getDistributors(context)
         val chosen = UnifiedPushBridge.chooseDistributor(available, UnifiedPush.getSavedDistributor(context))
-            ?: return "Background push needs the ntfy app installed and signed in."
+            ?: run {
+                DebugLog.log(context, "push", "No UnifiedPush distributor installed")
+                return "Background push needs the ntfy app installed and signed in."
+            }
+        DebugLog.log(context, "push", "Registering with push distributor $chosen")
         UnifiedPush.saveDistributor(context, chosen)
         UnifiedPush.registerApp(context, UnifiedPushBridge.INSTANCE, messageForDistributor = "PushGate approvals")
         return null
@@ -69,8 +73,14 @@ object UnifiedPushRegistration {
         runCatching {
             client.updatePushToken(enrollment, key, url) { result ->
                 result
-                    .onSuccess { prefs(appContext).edit().putString(UPLOADED_ENDPOINT, url).remove(LAST_ERROR).apply() }
-                    .onFailure { prefs(appContext).edit().putString(LAST_ERROR, "upload: ${it.javaClass.simpleName}").apply() }
+                    .onSuccess {
+                        prefs(appContext).edit().putString(UPLOADED_ENDPOINT, url).remove(LAST_ERROR).apply()
+                        DebugLog.log(appContext, "push", "Push endpoint sent to PushGate server")
+                    }
+                    .onFailure {
+                        prefs(appContext).edit().putString(LAST_ERROR, "upload: ${it.javaClass.simpleName}").apply()
+                        DebugLog.error(appContext, "push", "Could not send push endpoint to PushGate server", it)
+                    }
             }
         }.onFailure { prefs(appContext).edit().putString(LAST_ERROR, "upload: ${it.javaClass.simpleName}").apply() }
     }

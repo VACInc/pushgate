@@ -119,7 +119,12 @@ internal object DecisionClaimStore {
         if (binding != currentBinding) return false
         val claims = read(context).filter { it.isActive(currentBinding) }
         val replacement = DecisionClaim(challenge.id, challenge.expiresAt, binding, decision)
-        if (claims.any(replacement::conflictsWith)) {
+        if (
+            !decisionMayStart(
+                settled = SettledRequestStore.contains(context, challenge.id),
+                conflictingClaim = claims.any(replacement::conflictsWith)
+            )
+        ) {
             write(context, claims)
             return false
         }
@@ -138,6 +143,10 @@ internal object DecisionClaimStore {
             it.challengeId == challengeId && it.binding == binding && it.decision == decision
         }
     )
+
+    @Synchronized
+    fun hasActiveClaim(context: Context, challengeId: String, binding: NotificationEnrollmentBinding): Boolean =
+        read(context).any { it.challengeId == challengeId && it.isActive(binding) }
 
     @Synchronized
     fun clear(context: Context): Boolean =
@@ -239,11 +248,16 @@ internal object PendingDenialScheduler {
     fun clear(context: Context) {
         PendingDenialStore.clear(context)
         DecisionClaimStore.clear(context)
+        SettledRequestStore.clear(context)
         context.getSystemService(JobScheduler::class.java).cancel(JOB_ID)
     }
 
-    /** A settled request needs no queued denial and holds no decision claim. */
+    /**
+     * A settled request needs no queued denial and holds no decision claim. It is marked settled
+     * first so a late delivery cannot land between the claim release and the mark and repost it.
+     */
     fun discard(context: Context, challengeId: String) {
+        SettledRequestStore.mark(context, challengeId)
         PendingDenialStore.removeByChallengeId(context, challengeId)
         DecisionClaimStore.releaseAll(context, challengeId)
     }
@@ -279,6 +293,7 @@ class PendingDenialJobService : JobService() {
     private var jobGeneration = 0
 
     override fun onStartJob(params: JobParameters): Boolean {
+        DebugLog.log(this, "deny-job", "Queued deny job started")
         if (PendingDenialStore.loadDeliverable(this).isEmpty()) return false
         jobGeneration += 1
         deliverNext(params, jobGeneration)
@@ -286,6 +301,7 @@ class PendingDenialJobService : JobService() {
     }
 
     override fun onStopJob(params: JobParameters): Boolean {
+        DebugLog.log(this, "deny-job", "Android stopped the queued deny job early")
         jobGeneration += 1
         activeCall?.cancel()
         activeCall = null
@@ -325,10 +341,12 @@ class PendingDenialJobService : JobService() {
                     if (generation != jobGeneration) return@decide
                     activeCall = null
                     if (result.isSuccess) {
+                        ChallengeResolutions.settledHere(this, denial.challenge.id, Decision.Deny)
                         PendingDenialStore.remove(this, denial.stableId)
                         AuthNotificationDispatcher(this).cancel(denial.challenge.id, denial.binding)
                         deliverNext(params, generation)
                     } else {
+                        DebugLog.error(this, "deny-job", "Deny did not reach the server; will retry", result.exceptionOrNull())
                         AuthNotificationDispatcher(this).show(denial.challenge, denial.binding)
                         jobFinished(params, true)
                     }

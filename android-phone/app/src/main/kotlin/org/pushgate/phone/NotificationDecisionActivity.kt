@@ -70,7 +70,10 @@ class NotificationDecisionActivity : ComponentActivity() {
                 val notifications = AuthNotificationDispatcher(this)
                 handleNotificationDecisionResult(
                     result = it,
-                    onSuccess = { notifications.cancel(challenge.id, binding) },
+                    onSuccess = {
+                        ChallengeResolutions.settledHere(this, challenge.id, Decision.Approve)
+                        notifications.cancel(challenge.id, binding)
+                    },
                     onFailure = {
                         DecisionClaimStore.release(this, challenge.id, binding, Decision.Approve)
                         notifications.show(challenge, binding)

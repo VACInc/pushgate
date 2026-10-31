@@ -7,9 +7,20 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class DecisionActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        when (intent.action) {
-            AuthNotificationDispatcher.ACTION_DENY -> deny(context, intent)
-            AuthNotificationDispatcher.ACTION_APPROVE -> approve(context, intent)
+        // A crash here would also count toward Android marking the app bad (see the push receiver).
+        try {
+            val action = when (intent.action) {
+                AuthNotificationDispatcher.ACTION_DENY -> "Deny"
+                AuthNotificationDispatcher.ACTION_APPROVE -> "Approve"
+                else -> return
+            }
+            DebugLog.log(context, "decision", "$action tapped on notification (request ${intent.getStringExtra(AuthNotificationDispatcher.EXTRA_ID).orEmpty().take(8)}…)")
+            when (intent.action) {
+                AuthNotificationDispatcher.ACTION_DENY -> deny(context, intent)
+                AuthNotificationDispatcher.ACTION_APPROVE -> approve(context, intent)
+            }
+        } catch (error: Throwable) {
+            runCatching { DebugLog.error(context, "decision", "Notification action failed", error) }
         }
     }
 
@@ -64,6 +75,8 @@ class DecisionActionReceiver : BroadcastReceiver() {
             return
         }
         if (!DecisionClaimStore.tryClaim(context, challenge, binding, Decision.Approve)) return
+        // Clear on tap; a failure below posts an "approve failed" notification instead.
+        notifications.cancel(challenge.id, binding)
 
         val pending = goAsync()
         val completed = AtomicBoolean(false)
@@ -72,10 +85,19 @@ class DecisionActionReceiver : BroadcastReceiver() {
                 try {
                     handleNotificationDecisionResult(
                         result = result,
-                        onSuccess = { notifications.cancel(challenge.id, binding) },
+                        onSuccess = {
+                            ChallengeResolutions.settledHere(context, challenge.id, Decision.Approve)
+                            notifications.cancel(challenge.id, binding)
+                        },
                         onFailure = {
                             DecisionClaimStore.release(context, challenge.id, binding, Decision.Approve)
-                            notifications.show(challenge, binding)
+                            DebugLog.error(context, "decision", "Approve from notification failed", result.exceptionOrNull())
+                            val failure = approveFailure(result.exceptionOrNull(), challenge.isActionable())
+                            if (failure.retryable) {
+                                notifications.show(challenge, binding, failure.message)
+                            } else {
+                                notifications.showApproveFailed(challenge, binding, failure.message)
+                            }
                         }
                     )
                 } finally {

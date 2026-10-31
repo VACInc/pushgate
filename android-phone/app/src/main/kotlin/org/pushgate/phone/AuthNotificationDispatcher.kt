@@ -38,16 +38,74 @@ internal fun notificationText(challenge: AuthChallenge): String {
 internal fun decisionActionNeedsActivity(action: String, requireBiometric: Boolean): Boolean =
     action == AuthNotificationDispatcher.ACTION_APPROVE && requireBiometric
 
+/**
+ * UPDATE_CURRENT, not CANCEL_CURRENT: a repost for the same request must keep the action
+ * tokens the bridged watch notification already holds, or a watch tap fires a cancelled
+ * PendingIntent ("Couldn't approve action").
+ */
+internal const val DECISION_PENDING_INTENT_FLAGS: Int =
+    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+
 internal class AuthNotificationDispatcher(private val context: Context) {
-    fun show(challenge: AuthChallenge, expectedBinding: NotificationEnrollmentBinding? = null) {
-        val remainingLifetimeMillis = challenge.remainingLifetimeMillis() ?: return
+    /**
+     * Delivery-path entry (WebSocket, UnifiedPush, FCM). One request reaches the phone over
+     * several paths and the server's push retries; a repeat must not repost it while it is on
+     * screen (the bridged watch copy keeps the first post's actions), while this phone's own
+     * decision is claimed or in flight, or after it settled (a tap clears the notification
+     * before the server answers, so a late copy would otherwise come back as a second prompt).
+     */
+    fun showDelivered(challenge: AuthChallenge) {
+        RequestHistoryStore.recordRequest(context, challenge)
+        val binding = currentBinding(context) ?: run {
+            DebugLog.log(context, "notify", "Not shown: this phone is not enrolled")
+            return
+        }
+        val alreadyShown = isShown(binding, challenge.id)
+        val claimed = DecisionClaimStore.hasActiveClaim(context, challenge.id, binding)
+        val settled = SettledRequestStore.contains(context, challenge.id)
+        val post = deliveryShouldPostNotification(alreadyShown = alreadyShown, claimed = claimed, settled = settled)
+        if (!post) {
+            DebugLog.log(
+                context,
+                "notify",
+                "Not reposted (request ${challenge.id.take(8)}…): " +
+                    when {
+                        alreadyShown -> "already on screen"
+                        claimed -> "a decision is already in progress"
+                        else -> "already decided"
+                    }
+            )
+            return
+        }
+        show(challenge, binding)
+    }
+
+    private fun isShown(binding: NotificationEnrollmentBinding, challengeId: String): Boolean {
+        val tag = notificationTag(binding, challengeId)
+        return runCatching {
+            manager().activeNotifications.any { it.tag == tag && it.id == NOTIFICATION_ID }
+        }.getOrDefault(false)
+    }
+
+    fun show(
+        challenge: AuthChallenge,
+        expectedBinding: NotificationEnrollmentBinding? = null,
+        failureNote: String? = null
+    ) {
+        val remainingLifetimeMillis = challenge.remainingLifetimeMillis() ?: run {
+            DebugLog.log(context, "notify", "Not shown (request ${challenge.id.take(8)}…): already expired")
+            return
+        }
         val binding = currentBinding(context) ?: return
         if (expectedBinding != null && expectedBinding != binding) return
         ensureChannel()
-        val text = notificationText(challenge)
+        val text = failureNote?.let { "$it\n${notificationText(challenge)}" } ?: notificationText(challenge)
+        // Built once per post; the phone actions and the watch extender share these tokens.
+        val deny = action(ACTION_DENY, "Deny", challenge, binding)
+        val approve = action(ACTION_APPROVE, "Approve", challenge, binding)
         val notification = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("PushGate")
+            .setContentTitle(if (failureNote == null) "PushGate" else "PushGate: approve failed")
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setCategory(Notification.CATEGORY_STATUS)
@@ -57,10 +115,50 @@ internal class AuthNotificationDispatcher(private val context: Context) {
             .setOngoing(false)
             .setAutoCancel(true)
             .setTimeoutAfter(remainingLifetimeMillis)
-            .addAction(action(ACTION_APPROVE, "Approve", challenge, binding))
-            .addAction(action(ACTION_DENY, "Deny", challenge, binding))
+            .setContentIntent(openAppIntent(challenge, binding))
+            .addAction(deny)
+            .addAction(approve)
+            // Bridged watch: Approve on top, Deny below (phone keeps Deny left, Approve right).
+            .extend(Notification.WearableExtender().addAction(approve).addAction(deny))
             .build()
-        manager().notify(notificationTag(binding, challenge.id), NOTIFICATION_ID, notification)
+        val tag = notificationTag(binding, challenge.id)
+        manager().notify(tag, NOTIFICATION_ID, notification)
+        if (DebugLog.isEnabled(context)) {
+            val health = DeliveryHealthProbe.read(context)
+            val visible = runCatching { manager().activeNotifications.any { it.tag == tag && it.id == NOTIFICATION_ID } }.getOrNull()
+            DebugLog.log(
+                context,
+                "notify",
+                "Posted notification for ${safeDisplayText(challenge.system)} (request ${challenge.id.take(8)}…, " +
+                    "on screen=$visible, notifications allowed=${health.notificationsAllowed}, " +
+                    "channel importance=${health.channelImportance}, expires in ${remainingLifetimeMillis / 1000}s" +
+                    (failureNote?.let { ", note: $it" } ?: "") + ")"
+            )
+        }
+    }
+
+    /**
+     * Informational notice for an approve that can no longer be retried (already settled,
+     * expired). Uses its own tag so an `auth_decided` cancel for the request does not erase it.
+     */
+    fun showApproveFailed(challenge: AuthChallenge, binding: NotificationEnrollmentBinding, reason: String) {
+        if (currentBinding(context) != binding) return
+        ensureChannel()
+        val text = "$reason\n${notificationText(challenge)}"
+        val notification = Notification.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("PushGate: approve failed")
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setCategory(Notification.CATEGORY_STATUS)
+            .setColor(0xFFE5484D.toInt())
+            .setShowWhen(true)
+            .setWhen(System.currentTimeMillis())
+            .setAutoCancel(true)
+            .setTimeoutAfter(FAILURE_NOTICE_LIFETIME_MILLIS)
+            .setContentIntent(openAppIntent(challenge, binding))
+            .build()
+        manager().notify("${notificationTag(binding, challenge.id)}:failed", NOTIFICATION_ID, notification)
     }
 
     fun cancel(challengeId: String, binding: NotificationEnrollmentBinding? = currentBinding(context)) {
@@ -85,6 +183,16 @@ internal class AuthNotificationDispatcher(private val context: Context) {
         val icon = if (action == ACTION_APPROVE) android.R.drawable.ic_input_add else android.R.drawable.ic_menu_close_clear_cancel
         return Notification.Action.Builder(Icon.createWithResource(context, icon), title, pendingIntent).build()
     }
+
+    /** A tap on the notification body opens the app on this request; the action buttons never do. */
+    private fun openAppIntent(challenge: AuthChallenge, binding: NotificationEnrollmentBinding): PendingIntent =
+        PendingIntent.getActivity(
+            context,
+            0,
+            decisionIntent(MainActivity::class.java, ACTION_OPEN, challenge, binding)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -123,8 +231,7 @@ internal class AuthNotificationDispatcher(private val context: Context) {
             .putExtra(EXTRA_DEVICE_ID, binding.deviceId)
             .putExtra(EXTRA_SIGNING_KEY_ALIAS, binding.signingKeyAlias)
 
-    private fun pendingFlags(): Int =
-        PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+    private fun pendingFlags(): Int = DECISION_PENDING_INTENT_FLAGS
 
     private fun notificationTag(binding: NotificationEnrollmentBinding, challengeId: String): String =
         "${binding.signingKeyAlias}:$challengeId"
@@ -133,6 +240,7 @@ internal class AuthNotificationDispatcher(private val context: Context) {
         const val CHANNEL_ID = "pushgate.auth"
         const val ACTION_APPROVE = "org.pushgate.phone.APPROVE"
         const val ACTION_DENY = "org.pushgate.phone.DENY"
+        const val ACTION_OPEN = "org.pushgate.phone.OPEN_REQUEST"
         const val EXTRA_ID = "challenge_id"
         const val EXTRA_USERNAME = "username"
         const val EXTRA_SYSTEM = "system"
@@ -145,6 +253,7 @@ internal class AuthNotificationDispatcher(private val context: Context) {
         const val EXTRA_DEVICE_ID = "device_id"
         const val EXTRA_SIGNING_KEY_ALIAS = "signing_key_alias"
         private const val NOTIFICATION_ID = 1
+        private const val FAILURE_NOTICE_LIFETIME_MILLIS = 10 * 60 * 1000L
 
         internal fun currentBinding(context: Context): NotificationEnrollmentBinding? {
             val enrollment = EnrollmentStore.load(context) ?: return null

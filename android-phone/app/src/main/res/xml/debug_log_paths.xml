@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the one exported debug log file is shareable; nothing else in app storage. -->
+<paths>
+    <cache-path name="debuglog" path="debuglog-export/" />
+</paths>

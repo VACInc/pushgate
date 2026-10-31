@@ -8,3 +8,7 @@ For a release build, supply your own ignored `keystore.properties` with `storeFi
 Without all signing fields, the release APK stays unsigned. Never distribute a debug-signed build for production.
 Optional Firebase requires your own `app/google-services.json`; UnifiedPush requires an installed distributor and a server allowlist.
 Release builds require HTTPS. Debug builds allow only emulator, loopback and example test host cleartext traffic.
+
+## Screens
+
+Home shows status and a Settings entry only. Settings holds Restart connection, Re-enroll and Clear enrollment; Clear enrollment asks for confirmation first, matching the phone app.

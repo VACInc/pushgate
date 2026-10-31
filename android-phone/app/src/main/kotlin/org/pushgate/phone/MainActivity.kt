@@ -4,7 +4,9 @@ import android.Manifest
 import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -15,6 +17,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.content.FileProvider
 import com.google.zxing.integration.android.IntentIntegrator
 import okhttp3.Call
 import java.security.PrivateKey
@@ -46,9 +49,14 @@ class MainActivity : ComponentActivity() {
     private var isListening by mutableStateOf(false)
     private var isDeciding by mutableStateOf(false)
     private var decisionFeedback by mutableStateOf<DecisionFeedback?>(null)
+    private var panels by mutableStateOf(PhonePanels())
+    /** When the app screen was last left; a blocking stop after this is reported once on return. */
+    private var lastLeftAtMillis = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DebugLog.log(this, "screen", "App screen created" + if (savedInstanceState != null) " (restored)" else "")
+        lastLeftAtMillis = uiPrefs().getLong(LAST_LEFT_AT, 0L)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         requestNotificationPermission()
         PendingDenialScheduler.ensureScheduled(this)
@@ -66,7 +74,7 @@ class MainActivity : ComponentActivity() {
                 if (pendingEnrollment != null) {
                     "Enrollment recovery is active; do not reuse the enrollment payload"
                 } else {
-                    "Enrolled device ${stored.deviceId}"
+                    "This phone is enrolled"
                 }
             )
             startListeners(stored, pendingEnrollment?.signingKeyAlias)
@@ -82,6 +90,7 @@ class MainActivity : ComponentActivity() {
         }
 
         sharedText(intent)?.let { loadSharedEnrollmentPayload(it, "Loaded shared enrollment payload") }
+        openNotificationRequest(intent)
 
         setContent {
             PushGatePhoneApp(
@@ -95,30 +104,172 @@ class MainActivity : ComponentActivity() {
                     isEnrolling = isEnrolling,
                     isListening = isListening,
                     isDeciding = isDeciding,
-                    decisionFeedback = decisionFeedback
+                    decisionFeedback = decisionFeedback,
+                    panels = panels
                 ),
-                onServerUrlChange = { serverUrl = it },
-                onEnrollmentPayloadChange = { enrollmentPayload = it },
-                onScanQr = ::scanEnrollmentQr,
-                onPastePayload = ::pasteEnrollmentPayload,
-                onEnroll = ::enrollDevice,
-                onStartListening = {
-                    enrollment?.let(::startListeners) ?: status("Enroll this phone first")
-                },
-                onClearEnrollment = ::clearEnrollment,
-                onApprove = ::approveCurrentChallenge,
-                onDeny = ::denyCurrentChallenge,
-                onOpenHome = { screen = PhoneScreen.Home },
-                onOpenSettings = { screen = PhoneScreen.Settings },
-                onOpenEnrollment = { screen = PhoneScreen.Enrollment }
+                actions = PhoneUiActions(
+                    onServerUrlChange = { serverUrl = it },
+                    onEnrollmentPayloadChange = { enrollmentPayload = it },
+                    onScanQr = ::scanEnrollmentQr,
+                    onPastePayload = ::pasteEnrollmentPayload,
+                    onEnroll = ::enrollDevice,
+                    onRestartConnection = ::restartConnection,
+                    onReenroll = { navigate(PhoneScreen.Enrollment) },
+                    onClearEnrollment = ::clearEnrollment,
+                    onApprove = ::approveCurrentChallenge,
+                    onDeny = ::denyCurrentChallenge,
+                    onNavigate = ::navigate,
+                    onDebugLoggingChange = ::setDebugLogging,
+                    onRetentionChange = ::setLogRetention,
+                    onShareLogs = ::shareDebugLog,
+                    onOpenNotificationSettings = ::openNotificationSettings,
+                    onAllowBackground = ::requestBackgroundUse
+                )
             )
         }
+        refreshPanels()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         sharedText(intent)?.let { loadSharedEnrollmentPayload(it, "Loaded shared enrollment payload") }
+        openNotificationRequest(intent)
+    }
+
+    /** Notification body tap: show that request's card for the enrollment that received it. */
+    private fun openNotificationRequest(intent: Intent?) {
+        if (intent?.action != AuthNotificationDispatcher.ACTION_OPEN) return
+        val binding = AuthNotificationDispatcher.bindingFromIntent(intent) ?: return
+        if (binding != AuthNotificationDispatcher.currentBinding(this)) return
+        val challenge = AuthNotificationDispatcher.challengeFromIntent(intent) ?: return
+        screen = PhoneScreen.Home
+        if (!phoneCardShouldShow(SettledRequestStore.contains(this, challenge.id), challenge.isActionable())) {
+            AuthNotificationDispatcher(this).cancel(challenge.id, binding)
+            return
+        }
+        if (currentChallenge?.id != challenge.id) renderChallenge(challenge)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        DebugLog.log(this, "screen", "App opened")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        dropSettledCard()
+        refreshPanels()
+    }
+
+    override fun onStop() {
+        lastLeftAtMillis = System.currentTimeMillis()
+        uiPrefs().edit().putLong(LAST_LEFT_AT, lastLeftAtMillis).apply()
+        DebugLog.log(this, "screen", "App moved to the background")
+        super.onStop()
+    }
+
+    private fun navigate(target: PhoneScreen) {
+        screen = target
+        refreshPanels()
+    }
+
+    /** Re-reads history, logging and background-delivery state for Home, Settings and History. */
+    private fun refreshPanels() {
+        runCatching {
+            val health = DeliveryHealthProbe.read(this)
+            panels = PhonePanels(
+                history = RequestHistoryStore.list(this),
+                debugLoggingEnabled = DebugLog.isEnabled(this),
+                retentionDays = DebugLog.retentionDays(this),
+                debugLogBytes = DebugLog.storedBytes(this),
+                deliveryWarnings = if (enrollment != null) DeliveryWarnings.of(health) else emptyList(),
+                batteryUnrestricted = health.batteryUnrestricted,
+                lastStopNotice = DeliveryWarnings.lastStopNotice(health.lastStop, lastLeftAtMillis)?.let { notice ->
+                    val at = health.lastStop?.timestampMillis ?: 0L
+                    "${historyTime(at, System.currentTimeMillis())}: $notice"
+                },
+                appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+            )
+        }.onFailure { DebugLog.error(this, "screen", "Could not refresh settings and history", it) }
+    }
+
+    private fun restartConnection() {
+        val active = enrollment ?: run {
+            status("Enroll this phone first")
+            return
+        }
+        DebugLog.log(this, "connection", "Restart connection tapped")
+        startListeners(active, EnrollmentStore.loadPending(this)?.signingKeyAlias)
+        refreshPanels()
+    }
+
+    private fun setDebugLogging(enabled: Boolean) {
+        DebugLog.setEnabled(this, enabled)
+        status(if (enabled) "Debug logging is on" else "Debug logging is off and the log was deleted")
+        refreshPanels()
+    }
+
+    private fun setLogRetention(days: Int) {
+        DebugLog.setRetentionDays(this, days)
+        status("Debug logs are kept for ${if (days == 1) "1 day" else "$days days"}")
+        refreshPanels()
+    }
+
+    private fun shareDebugLog() {
+        if (!DebugLog.isEnabled(this)) {
+            status("Turn on debug logging first")
+            return
+        }
+        runCatching {
+            val file = DebugLog.export(this)
+            val uri = FileProvider.getUriForFile(this, "$packageName.debuglog", file)
+            val send = Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT, "PushGate debug log")
+                .putExtra(Intent.EXTRA_STREAM, uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(Intent.createChooser(send, "Share PushGate debug log"))
+        }.onFailure {
+            DebugLog.error(this, "log", "Could not share the debug log", it)
+            status("Could not share the debug log")
+        }
+    }
+
+    private fun openNotificationSettings() {
+        runCatching {
+            startActivity(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            )
+        }.onFailure { status("Open Android Settings > Apps > PushGate > Notifications") }
+    }
+
+    /** Asks Android to exempt PushGate from battery optimization so it is not put to sleep. */
+    private fun requestBackgroundUse() {
+        DebugLog.log(this, "settings", "Allow background use tapped")
+        val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).setData(Uri.parse("package:$packageName"))
+        runCatching { startActivity(direct) }
+            .recoverCatching { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+            .onFailure { status("Open Android Settings > Apps > PushGate > Battery and choose Unrestricted") }
+    }
+
+    private fun uiPrefs() = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+
+    /**
+     * The card can outlive its request while the app is in the background: a notification or
+     * watch tap settles it elsewhere and the `auth_decided` event may never reach this screen.
+     */
+    private fun dropSettledCard(): Boolean {
+        val challenge = currentChallenge ?: return false
+        if (decidingChallengeId == challenge.id) return false
+        if (!SettledRequestStore.contains(this, challenge.id)) return false
+        expiryTimer?.let(expiryHandler::removeCallbacks)
+        currentChallenge = null
+        challengeState = null
+        isDeciding = false
+        decidingChallengeId = null
+        status("Request already decided")
+        return true
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -135,6 +286,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        DebugLog.log(this, "screen", "App screen closed")
         listenerGeneration += 1
         enrollmentCall?.cancel()
         enrollmentCall = null
@@ -236,7 +388,7 @@ class MainActivity : ComponentActivity() {
 
         enrollmentAttemptAlias = stagedSigningKey.alias
         isEnrolling = true
-        status("Enrolling device ${nextEnrollment.deviceId}")
+        status("Enrolling this phone")
         runCatching {
             enrollmentCall = client.enroll(
                 nextEnrollment,
@@ -330,6 +482,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startListeners(activeEnrollment: Enrollment, signingKeyAlias: String? = null) {
+        DebugLog.log(this, "connection", "Starting request connection")
         listenerGeneration += 1
         val generation = listenerGeneration
         isListening = false
@@ -368,16 +521,21 @@ class MainActivity : ComponentActivity() {
                     onChallenge = { challenge ->
                         runOnUiThread {
                             if (isDestroyed || generation != listenerGeneration) return@runOnUiThread
+                            // A late copy (pending replay, reconnect) of a request already settled here.
+                            if (SettledRequestStore.contains(this, challenge.id)) return@runOnUiThread
+                            DebugLog.log(this, "connection", "Request received over the live connection: ${safeDisplayText(challenge.system)} (request ${challenge.id.take(8)}…)")
                             wearRelay?.relayChallenge(challenge)
                             currentChallenge = challenge
                             renderChallenge(challenge)
-                            AuthNotificationDispatcher(this).show(challenge)
+                            AuthNotificationDispatcher(this).showDelivered(challenge)
+                            refreshPanels()
                         }
                     },
                     onError = { error ->
                         runOnUiThread {
                             if (isDestroyed || generation != listenerGeneration) return@runOnUiThread
                             isListening = false
+                            DebugLog.error(this, "connection", "Live connection problem", error)
                             statusError(
                                 if (error is PushReconnecting) "Connection lost. Reconnecting automatically."
                                 else "Push connection rejected. Check enrollment and server access.", error
@@ -388,6 +546,7 @@ class MainActivity : ComponentActivity() {
                         runOnUiThread {
                             if (isDestroyed || generation != listenerGeneration) return@runOnUiThread
                             isListening = true
+                            DebugLog.log(this, "connection", "Live connection ready")
                             status(
                                 if (BuildConfig.FCM_CONFIGURED) "Connected. Listening for push requests"
                                 else UnifiedPushRegistration.statusLine(this)
@@ -483,6 +642,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun clearEnrollment() {
+        DebugLog.log(this, "settings", "Clear enrollment confirmed")
         listenerGeneration += 1
         AuthNotificationDispatcher(this).cancelAll()
         PendingDenialScheduler.clear(this)
@@ -515,6 +675,7 @@ class MainActivity : ComponentActivity() {
         isDeciding = false
         val cleanupFinished = resumeInterruptedEnrollmentClear()
         screen = PhoneScreen.Enrollment
+        refreshPanels()
         status(
             if (cleanupFinished) {
                 "Enrollment cleared"
@@ -553,6 +714,9 @@ class MainActivity : ComponentActivity() {
     private fun applyResolution(resolution: ChallengeResolution) {
         AuthNotificationDispatcher(this).cancel(resolution.id)
         PendingDenialScheduler.discard(this, resolution.id)
+        RequestHistoryStore.resolve(this, resolution.id, resolution.status, decidedHere = resolution.decidedHere)
+        DebugLog.log(this, "decision", "Request ${resolution.id.take(8)}… settled: ${resolution.status}" + if (resolution.decidedHere) " (on this phone)" else "")
+        refreshPanels()
         wearRelay?.relayResolution(resolution)
         val challenge = currentChallenge ?: return
         if (challenge.id != resolution.id) return
@@ -572,8 +736,8 @@ class MainActivity : ComponentActivity() {
         }
         status(
             when (resolution.status) {
-                "approved" -> "Request approved on another device"
-                "denied" -> "Request denied on another device"
+                "approved" -> if (resolution.decidedHere) "Request approved" else "Request approved on another device"
+                "denied" -> if (resolution.decidedHere) "Request denied" else "Request denied on another device"
                 "timeout" -> "Request expired"
                 else -> "Request ${resolution.status}"
             }
@@ -589,6 +753,7 @@ class MainActivity : ComponentActivity() {
         val activeEnrollment = enrollment ?: return
         val key = privateKey ?: return
         val binding = AuthNotificationDispatcher.currentBinding(this) ?: return
+        if (dropSettledCard()) return
         if (!DecisionClaimStore.tryClaim(this, challenge, binding, Decision.Approve)) {
             status("A decision for this request is already in progress")
             return
@@ -610,6 +775,7 @@ class MainActivity : ComponentActivity() {
         val activeEnrollment = enrollment ?: return
         val key = privateKey ?: return
         val binding = AuthNotificationDispatcher.currentBinding(this) ?: return
+        if (dropSettledCard()) return
         if (!DecisionClaimStore.tryClaim(this, challenge, binding, Decision.Deny)) {
             status("A decision for this request is already in progress")
             return
@@ -636,6 +802,10 @@ class MainActivity : ComponentActivity() {
         }
         result
             .onSuccess {
+                SettledRequestStore.mark(this, challenge.id)
+                RequestHistoryStore.resolve(this, challenge.id, action, decidedHere = true)
+                DebugLog.log(this, "decision", "${decision.wireValue} sent from the app for request ${challenge.id.take(8)}… and accepted")
+                refreshPanels()
                 AuthNotificationDispatcher(this).cancel(challenge.id)
                 if (!isCurrentChallenge) return@onSuccess
                 currentChallenge = null
@@ -650,6 +820,7 @@ class MainActivity : ComponentActivity() {
             }
             .onFailure {
                 DecisionClaimStore.release(this, challenge.id, binding, decision)
+                DebugLog.error(this, "decision", "${decision.wireValue} from the app failed", it)
                 if (!isCurrentChallenge) return@onFailure
                 if (it is DecisionResponseException && it.receivedStatus.isNotBlank()) {
                     applyResolution(ChallengeResolution(challenge.id, it.receivedStatus))
@@ -706,6 +877,9 @@ class MainActivity : ComponentActivity() {
         status(message)
     }
 }
+
+private const val UI_PREFS = "pushgate.ui"
+private const val LAST_LEFT_AT = "last_left_at"
 
 private fun sanitizeStatus(message: String): String {
     val cleaned = message.trim()

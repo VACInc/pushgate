@@ -90,12 +90,13 @@ object FcmBackgroundMessageHandler {
         ChallengeResolution.fromData(data)?.let { resolution ->
             AuthNotificationDispatcher(context).cancel(resolution.id)
             PendingDenialScheduler.discard(context, resolution.id)
-            return Result.failure(IllegalStateException("Request ${resolution.id} is ${resolution.status}"))
+            RequestHistoryStore.resolve(context, resolution.id, resolution.status, decidedHere = false)
+            return Result.failure(IllegalStateException("request is settled (${resolution.status})"))
         }
         val expectedDeviceId = EnrollmentStore.load(context)?.deviceId
-            ?: return Result.failure(SecurityException("No active enrollment for FCM payload"))
+            ?: return Result.failure(SecurityException("this phone is not enrolled"))
         return showNotification(data, expectedDeviceId) { challenge ->
-            AuthNotificationDispatcher(context).show(challenge)
+            AuthNotificationDispatcher(context).showDelivered(challenge)
         }
     }
 
@@ -106,7 +107,7 @@ object FcmBackgroundMessageHandler {
     ): Result<AuthChallenge> =
         runCatching {
             require(FcmPushEntrypoint.deviceIdFromData(data) == expectedDeviceId) {
-                "FCM payload does not match the active enrollment"
+                "push is for another enrollment"
             }
             FcmPushEntrypoint.challengeFromData(data).also {
                 require(it.isActionable()) { "Challenge is expired or malformed" }
