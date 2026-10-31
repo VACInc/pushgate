@@ -15,6 +15,8 @@ internal data class HistoryEntry(
     val host: String,
     val source: String,
     val service: String,
+    /** The server's request line as it arrived (blank from an older server or an older entry). */
+    val text: String = "",
     /** Server status: pending, approved, denied, timeout (or another settled status). */
     val status: String,
     val decidedAtMillis: Long? = null,
@@ -38,6 +40,7 @@ internal object HistoryRecords {
             host = safeDisplayText(challenge.system),
             source = safeDisplayText(challenge.sourceIp),
             service = safeDisplayText(challenge.pamService),
+            text = safeDisplayText(challenge.pushText),
             status = "pending"
         )
 
@@ -79,14 +82,8 @@ internal object HistoryRecords {
         else -> entry.status.replaceFirstChar { it.uppercase() }
     }
 
-    /** "deploy wants web-02 from bastion (SSH access)" with blanks spelled out. */
-    fun summary(entry: HistoryEntry): String {
-        val user = entry.username.ifBlank { "Unknown user" }
-        val host = entry.host.ifBlank { "unknown host" }
-        val source = entry.source.ifBlank { "unknown address" }
-        val service = entry.service.takeIf { it.isNotBlank() && !it.equals(entry.host, ignoreCase = true) }
-        return "$user wants $host from $source" + (service?.let { " ($it)" } ?: "")
-    }
+    /** The History line: the server's text as it arrived, the same line the notification showed. */
+    fun displayText(entry: HistoryEntry): String = requestText(entry.text, entry.username, entry.host)
 
     fun encode(entries: List<HistoryEntry>): String {
         val array = JSONArray()
@@ -101,6 +98,7 @@ internal object HistoryRecords {
                     .put("host", e.host)
                     .put("source", e.source)
                     .put("service", e.service)
+                    .put("text", e.text)
                     .put("status", e.status)
                     .put("decided", e.decidedAtMillis ?: JSONObject.NULL)
                     .put("here", e.decidedHere)
@@ -124,6 +122,7 @@ internal object HistoryRecords {
                     host = o.optString("host"),
                     source = o.optString("source"),
                     service = o.optString("service"),
+                    text = o.optString("text"),
                     status = o.optString("status").ifBlank { "pending" },
                     decidedAtMillis = o.optLongOrNull("decided"),
                     decidedHere = o.optBoolean("here", false)

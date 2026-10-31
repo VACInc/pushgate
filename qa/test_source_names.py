@@ -477,6 +477,8 @@ def run_named_logins(app, push) -> None:
         assert text[named.json()["data"]["id"]] == f"Service User requests SSH from {CLIENT_NAME} to server02"
         assert text[unknown.json()["data"]["id"]] == f"Service User requests SSH from {UNKNOWN_IP} to server02"
         assert text[sent_name.json()["data"]["id"]] == "Service User requests SSH from server03 to server02"
+        # The title is the server's too.
+        assert {p["data"]["push_title"] for p in payloads} == {"PushGate"}
         assert shown[named.json()["data"]["id"]] == CLIENT_NAME
         assert shown[unknown.json()["data"]["id"]] == UNKNOWN_IP  # unresolvable: the address, as before
         assert shown[sent_name.json()["data"]["id"]] == "server03"  # helper already named it: unchanged

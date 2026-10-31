@@ -98,8 +98,10 @@ data class AuthChallenge(
     val requestedAt: String?,
     val expiresAt: String,
     val requireBiometric: Boolean,
-    /** The server's one-line approval text ("Agent requests SSH from workstation to server01"), when it sends one. */
-    val pushText: String? = null
+    /** The server's one-line request text ("Agent requests SSH from workstation to server01"), shown as sent. */
+    val pushText: String? = null,
+    /** The server's notification title ("PushGate"), shown as sent. */
+    val pushTitle: String? = null
 ) {
     companion object {
         fun fromJson(json: JSONObject): AuthChallenge {
@@ -114,7 +116,8 @@ data class AuthChallenge(
                 requestedAt = optionalString(json, "requested_at") ?: detail?.let { optionalString(it, "timestamp") } ?: optionalString(json, "created_at"),
                 expiresAt = json.optString("expires_at"),
                 requireBiometric = json.optBoolean("require_biometric", true),
-                pushText = optionalString(json, "push_text")
+                pushText = optionalString(json, "push_text"),
+                pushTitle = optionalString(json, "push_title")
             )
         }
 

@@ -640,8 +640,8 @@ class MainActivity : ComponentActivity() {
         currentChallenge = null
         challengeState = null
         decisionFeedback = when (resolution.status) {
-            "approved" -> WearDecisionFeedback(WearDecisionFeedbackKind.Approved, challenge.username, challenge.pamService, challenge.system)
-            "denied" -> WearDecisionFeedback(WearDecisionFeedbackKind.Denied, challenge.username, challenge.pamService, challenge.system)
+            "approved" -> WearDecisionFeedback(WearDecisionFeedbackKind.Approved, wearNotificationText(challenge))
+            "denied" -> WearDecisionFeedback(WearDecisionFeedbackKind.Denied, wearNotificationText(challenge))
             else -> null
         }
         status(
@@ -725,15 +725,11 @@ class MainActivity : ComponentActivity() {
                 decisionFeedback = when (outcome) {
                     WearDecisionOutcome.Approved -> WearDecisionFeedback(
                         kind = WearDecisionFeedbackKind.Approved,
-                        username = challenge.username,
-                        service = challenge.pamService,
-                        system = challenge.system
+                        text = wearNotificationText(challenge)
                     )
                     WearDecisionOutcome.Denied -> WearDecisionFeedback(
                         kind = WearDecisionFeedbackKind.Denied,
-                        username = challenge.username,
-                        service = challenge.pamService,
-                        system = challenge.system
+                        text = wearNotificationText(challenge)
                     )
                     WearDecisionOutcome.Timeout,
                     WearDecisionOutcome.Pending -> null

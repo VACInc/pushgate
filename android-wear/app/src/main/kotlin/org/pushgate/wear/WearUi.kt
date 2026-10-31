@@ -97,9 +97,8 @@ enum class WearDecisionFeedbackKind {
 
 data class WearDecisionFeedback(
     val kind: WearDecisionFeedbackKind,
-    val username: String,
-    val service: String,
-    val system: String
+    /** The request's server line, as the notification showed it. */
+    val text: String
 )
 
 data class WearUiState(
@@ -450,23 +449,14 @@ private fun WearChallengeScreen(
             )
         }
     ) {
-        item { WearHeader(title = challenge.username.ifBlank { "Unknown user" }, subtitle = challenge.pamService.ifBlank { "authentication" }) }
+        item { WearHeader(title = wearNotificationTitle(challenge), subtitle = "") }
         item {
             WearCard(modifier = Modifier.testTag("wear_challenge_card")) {
+                // The server's line, exactly as the notification showed it.
                 Text(
-                    text = challenge.system.ifBlank { "Unknown host" },
+                    text = wearNotificationText(challenge),
                     style = MaterialTheme.typography.title3,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = sourceSummary(challenge),
-                    style = MaterialTheme.typography.caption1,
-                    color = WearMuted,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 3,
+                    maxLines = 4,
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(8.dp))
@@ -582,13 +572,15 @@ private fun WearHeader(title: String, subtitle: String) {
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-        Text(
-            text = subtitle,
-            style = MaterialTheme.typography.caption1,
-            color = WearMuted,
-            textAlign = TextAlign.Center,
-            maxLines = 2
-        )
+        if (subtitle.isNotBlank()) {
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.caption1,
+                color = WearMuted,
+                textAlign = TextAlign.Center,
+                maxLines = 2
+            )
+        }
     }
 }
 
@@ -657,7 +649,7 @@ private fun WearDecisionFeedbackCard(feedback: WearDecisionFeedback) {
             modifier = Modifier.fillMaxWidth()
         )
         Text(
-            text = "${feedback.service} • ${feedback.system}",
+            text = feedback.text,
             style = MaterialTheme.typography.caption1,
             color = WearMuted,
             textAlign = TextAlign.Center,
@@ -880,8 +872,3 @@ private fun compactTime(value: String?): String =
         }.getOrElse { raw }
     } ?: "unknown"
 
-private fun sourceSummary(challenge: WearChallenge): String {
-    val source = challenge.sourceIp?.takeIf { it.isNotBlank() } ?: "Unknown IP"
-    val location = challenge.geolocation?.takeIf { it.isNotBlank() }
-    return if (location == null) source else "$source • $location"
-}

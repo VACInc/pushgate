@@ -1,11 +1,13 @@
-"""The one-line approval text every PushGate notification shows.
+"""All request text a PushGate phone or watch shows, built here and only here.
 
-    <USER> requests <SERVICE> from <source machine> to <host>
-    e.g. "Agent requests SSH from workstation to server01"
+    title: `push_title`, "PushGate"
+    body:  `push_text`, <USER> requests <SERVICE> from <source machine> to <host>
+           e.g. "Agent requests SSH from workstation to server01"
 
 Who asks, for what, from which machine, to which host. Nothing else: no reason, no
-approver, no second line. The phone and watch apps show the server's `push_text`
-as it is, so the wording changes here without an app update.
+approver, no second line. The phone and watch apps show `push_title` and `push_text`
+as they are (notification, approval screen, history), so any wording change is a
+server release here, never an app update.
 """
 
 from __future__ import annotations
@@ -15,6 +17,9 @@ from collections.abc import Mapping
 # Service labels that all mean an SSH login. Helpers send "SSH access", older
 # helpers "sshd"; a consent push may send "SSH as <login user>".
 _SSH_SERVICES = {"ssh access", "sshd", "ssh"}
+
+# The notification title. The apps show it as it is.
+PUSH_TITLE = "PushGate"
 
 
 def _clean(value: object) -> str:
@@ -80,3 +85,8 @@ def push_text(
     src = _clean(source) or "unknown source"
     dest = _clean(system) or "unknown host"
     return f"{user} requests {service} from {src} to {dest}"
+
+
+def push_title() -> str:
+    """The notification title every request shows."""
+    return PUSH_TITLE

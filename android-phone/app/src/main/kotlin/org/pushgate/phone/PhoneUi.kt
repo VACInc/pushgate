@@ -124,9 +124,8 @@ enum class DecisionFeedbackKind {
 
 data class DecisionFeedback(
     val kind: DecisionFeedbackKind,
-    val username: String,
-    val service: String,
-    val system: String
+    /** The request's server line, as the notification showed it. */
+    val text: String
 )
 
 internal data class PhonePanels(
@@ -696,20 +695,23 @@ private fun HistoryRow(entry: HistoryEntry, nowMillis: Long) {
         modifier = Modifier
             .fillMaxWidth()
             .testTag("history_row")
-            .semantics { contentDescription = HistoryRecords.summary(entry) + ". " + result },
+            .semantics { contentDescription = HistoryRecords.displayText(entry) + ". " + result },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(8.dp)
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = entry.host.ifBlank { "Unknown host" },
-                    style = MaterialTheme.typography.titleMedium,
+                    text = HistoryRecords.displayText(entry),
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("history_line"),
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
+                Spacer(Modifier.width(8.dp))
                 Text(
                     text = result,
                     style = MaterialTheme.typography.labelLarge,
@@ -717,13 +719,6 @@ private fun HistoryRow(entry: HistoryEntry, nowMillis: Long) {
                     color = color
                 )
             }
-            Text(
-                text = "${entry.username.ifBlank { "Unknown user" }} from ${entry.source.ifBlank { "unknown address" }}" +
-                    (entry.service.takeIf { it.isNotBlank() && !it.equals(entry.host, ignoreCase = true) }?.let { " · $it" } ?: ""),
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
             Text(
                 text = historyTime(entry.sortTimeMillis, nowMillis),
                 style = MaterialTheme.typography.labelMedium,
@@ -962,23 +957,17 @@ private fun ChallengeScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = safeDisplayText(challenge.username).ifBlank { "Unknown user" },
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = safeDisplayText(challenge.pamService).ifBlank { "authentication" },
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontFamily = FontFamily.Monospace,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+                    // The server's line, exactly as the notification showed it.
+                    Text(
+                        text = notificationText(challenge),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("challenge_headline")
+                    )
                     Spacer(Modifier.width(12.dp))
                     CountdownRing(countdown)
                 }
@@ -1095,7 +1084,7 @@ private fun DecisionFeedbackCard(feedback: DecisionFeedback) {
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "${feedback.username} • ${feedback.service} • ${feedback.system}",
+                    text = feedback.text,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,

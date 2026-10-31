@@ -88,8 +88,15 @@ the shown text can be checked in the server log.
 
 ## Approval line
 
-Every request notification is one line, built by the server and sent to the phone
-and watch as `push_text` (the ntfy wake-up uses it as its body):
+The server owns every word of request text the phone and watch show. Each request
+event (push payload, live connection, pending replay) carries `push_title` (the
+notification title, `PushGate`) and `push_text` (one line, also the ntfy wake-up
+body). The apps show both exactly as sent: notification, approval screen headline
+and History line. The structured fields (`id`, `username`, `system`, ...) are for
+app logic only. Approve and deny stay bound to the signed request id; the text is
+display only. Changing the wording is a server release, never an app update.
+
+The line:
 
 `<user> requests <service> from <source> to <system>`, for example
 `Agent requests SSH from workstation to server01`.
@@ -101,7 +108,9 @@ and watch as `push_text` (the ntfy wake-up uses it as its body):
 - `<source>` is the requester name above, else the address the helper sent.
 - `<system>` is the host label the helper sent.
 
-There is no reason or second line. Apps that predate `push_text` build their own text.
+There is no reason or second line. Only when a server sends no `push_text` (older
+than 1.0.5) do the apps fall back to a minimal `<user> requests access to <system>`;
+without `push_title` they title it `PushGate`.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |

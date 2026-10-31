@@ -12,3 +12,7 @@ Release builds require HTTPS. Debug builds allow only emulator, loopback and exa
 ## Screens
 
 Home shows status and a Settings entry only. Settings holds Restart connection, Re-enroll and Clear enrollment; Clear enrollment asks for confirmation first, matching the phone app.
+
+## Request text
+
+The server owns every word of request text. The watch shows the server's `push_title` and `push_text` exactly as sent, on the notification and the request screen. Only a server older than 1.0.5 sends no line; then the watch shows a minimal `<user> requests access to <host>` titled `PushGate`. Change wording on the server, never here.

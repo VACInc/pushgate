@@ -728,8 +728,8 @@ class MainActivity : ComponentActivity() {
         isDeciding = false
         decidingChallengeId = null
         decisionFeedback = when (resolution.status) {
-            "approved" -> DecisionFeedback(DecisionFeedbackKind.Approved, challenge.username, challenge.pamService, challenge.system)
-            "denied" -> DecisionFeedback(DecisionFeedbackKind.Denied, challenge.username, challenge.pamService, challenge.system)
+            "approved" -> DecisionFeedback(DecisionFeedbackKind.Approved, notificationText(challenge))
+            "denied" -> DecisionFeedback(DecisionFeedbackKind.Denied, notificationText(challenge))
             else -> null
         }
         status(
@@ -810,9 +810,7 @@ class MainActivity : ComponentActivity() {
                 challengeState = null
                 decisionFeedback = DecisionFeedback(
                     kind = if (action == "approved") DecisionFeedbackKind.Approved else DecisionFeedbackKind.Denied,
-                    username = challenge.username,
-                    service = challenge.pamService,
-                    system = challenge.system
+                    text = notificationText(challenge)
                 )
                 status("Request $action")
             }

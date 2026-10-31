@@ -16,7 +16,7 @@ class WearAuthNotificationDispatcher(private val context: Context) {
         ensureChannel()
         val notification = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setContentTitle("PushGate")
+            .setContentTitle(wearNotificationTitle(challenge))
             .setContentText(wearNotificationText(challenge))
             .setStyle(Notification.BigTextStyle().bigText(wearNotificationText(challenge)))
             .setCategory(Notification.CATEGORY_STATUS)
@@ -97,6 +97,7 @@ class WearAuthNotificationDispatcher(private val context: Context) {
             .putExtra(EXTRA_EXPIRES_AT, challenge.expiresAt)
             .putExtra(EXTRA_REQUIRE_BIOMETRIC, challenge.requireBiometric)
             .putExtra(EXTRA_PUSH_TEXT, challenge.pushText)
+            .putExtra(EXTRA_PUSH_TITLE, challenge.pushTitle)
 
     private fun pendingFlags(): Int = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 
@@ -119,6 +120,7 @@ class WearAuthNotificationDispatcher(private val context: Context) {
         const val EXTRA_EXPIRES_AT = "expires_at"
         const val EXTRA_REQUIRE_BIOMETRIC = "require_biometric"
         const val EXTRA_PUSH_TEXT = "push_text"
+        const val EXTRA_PUSH_TITLE = "push_title"
 
         fun challengeFromIntent(intent: Intent): WearChallenge? {
             val id = intent.getStringExtra(EXTRA_ID)?.takeIf(String::isNotBlank) ?: return null
@@ -132,7 +134,8 @@ class WearAuthNotificationDispatcher(private val context: Context) {
                 requestedAt = intent.getStringExtra(EXTRA_REQUESTED_AT),
                 expiresAt = intent.getStringExtra(EXTRA_EXPIRES_AT).orEmpty(),
                 requireBiometric = intent.getBooleanExtra(EXTRA_REQUIRE_BIOMETRIC, true),
-                pushText = intent.getStringExtra(EXTRA_PUSH_TEXT)
+                pushText = intent.getStringExtra(EXTRA_PUSH_TEXT),
+                pushTitle = intent.getStringExtra(EXTRA_PUSH_TITLE)
             )
         }
 
@@ -158,32 +161,21 @@ internal fun isWearNotificationEnrollmentCurrent(
     currentEnrollment?.signingKeyAlias == expectedSigningKeyAlias
 
 /**
- * Same line as the phone, `<user> requests <service> from <source> to <host>`: the server's
- * `push_text` when it sends one, else built here by the same rules. Never a second line.
+ * Same as the phone: the server owns every word. Its `push_title` and `push_text` are shown
+ * exactly as sent (notification, request screen); any wording change is a server release.
+ * Only a server older than 1.0.5 sends no line; then a minimal one stands in. Never a second line.
  */
+internal const val WEAR_FALLBACK_TITLE = "PushGate"
+
+internal fun wearNotificationTitle(challenge: WearChallenge): String =
+    wearDisplayText(challenge.pushTitle).ifBlank { WEAR_FALLBACK_TITLE }
+
 internal fun wearNotificationText(challenge: WearChallenge): String =
-    wearDisplayText(challenge.pushText).ifBlank { wearLocalPushText(challenge) }
-
-internal fun wearLocalPushText(challenge: WearChallenge): String {
-    val login = wearDisplayText(challenge.username)
-    val user = login.ifBlank { "Unknown user" }
-    val system = wearDisplayText(challenge.system)
-    val service = wearDisplayService(wearDisplayText(challenge.pamService), login, system)
-    val source = wearDisplayText(challenge.sourceIp).ifBlank { "unknown source" }
-    return "$user requests $service from $source to ${system.ifBlank { "unknown host" }}"
-}
-
-/** SSH login labels read "SSH"; any other service keeps its name (same rules as the server). */
-internal fun wearDisplayService(service: String, login: String, system: String): String {
-    val lowered = service.lowercase()
-    if (service.isEmpty()) return "access"
-    if (lowered in setOf("ssh access", "sshd", "ssh") || lowered == system.lowercase()) return "SSH"
-    if (lowered == "ssh as" || lowered.startsWith("ssh as ")) {
-        val target = service.substring("ssh as".length).trim()
-        return if (target.isEmpty() || target.equals(login, ignoreCase = true)) "SSH" else "SSH as $target"
+    wearDisplayText(challenge.pushText).ifBlank {
+        val user = wearDisplayText(challenge.username).ifBlank { "Unknown user" }
+        val host = wearDisplayText(challenge.system).ifBlank { "unknown host" }
+        "$user requests access to $host"
     }
-    return service
-}
 
 /** Flattens a value to one bounded line with no control or bidi characters. */
 internal fun wearDisplayText(value: String?, maxLength: Int = 160): String {

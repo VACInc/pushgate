@@ -18,7 +18,8 @@ class RequestHistoryTest {
         geolocation = null,
         requestedAt = "2026-10-30T23:35:34.680976+00:00",
         expiresAt = "2026-10-30T23:36:34.679197+00:00",
-        requireBiometric = false
+        requireBiometric = false,
+        pushText = "Deploy requests SSH from bastion to web-02"
     )
     private val requestedMillis = HistoryRecords.parseMillis(request.requestedAt)!!
     private val expiresMillis = HistoryRecords.parseMillis(request.expiresAt)!!
@@ -33,7 +34,8 @@ class RequestHistoryTest {
         assertEquals("pending", entry.status)
         assertEquals(requestedMillis, entry.sortTimeMillis)
         assertEquals("Waiting", HistoryRecords.resultText(entry, requestedMillis + 1_000))
-        assertEquals("deploy wants web-02 from bastion (SSH access)", HistoryRecords.summary(entry))
+        assertEquals("Deploy requests SSH from bastion to web-02", entry.text)
+        assertEquals("Deploy requests SSH from bastion to web-02", HistoryRecords.displayText(entry))
     }
 
     @Test
@@ -111,11 +113,27 @@ class RequestHistoryTest {
     }
 
     @Test
-    fun summaryOmitsServiceWhenItIsJustTheHostAgain() {
-        val entry = HistoryRecords.fromChallenge(request.copy(system = "web-03", pamService = "web-03"), requestedMillis)
-        assertEquals("deploy wants web-03 from bastion", HistoryRecords.summary(entry))
-        val blank = HistoryRecords.fromChallenge(request.copy(username = "", system = "", sourceIp = null, pamService = ""), requestedMillis)
-        assertEquals("Unknown user wants unknown host from unknown address", HistoryRecords.summary(blank))
+    fun historyLineIsTheServerTextVerbatim() {
+        // Whatever the server says, even a wording the app has no rule for.
+        val entry = HistoryRecords.fromChallenge(request.copy(pushText = "Robot asks to log in to web-03"), requestedMillis)
+        assertEquals("Robot asks to log in to web-03", HistoryRecords.displayText(entry))
+        // It survives the store and is still what History shows.
+        assertEquals("Robot asks to log in to web-03", HistoryRecords.displayText(HistoryRecords.decode(HistoryRecords.encode(listOf(entry))).single()))
+        // The History line is the same line the notification showed.
+        assertEquals(notificationText(request), HistoryRecords.displayText(HistoryRecords.fromChallenge(request, requestedMillis)))
+    }
+
+    @Test
+    fun historyFallsBackOnlyWithoutServerText() {
+        // An older server sent no line.
+        val old = HistoryRecords.fromChallenge(request.copy(pushText = null), requestedMillis)
+        assertEquals("", old.text)
+        assertEquals("deploy requests access to web-02", HistoryRecords.displayText(old))
+        // An entry stored by an older app version has no "text" key.
+        val stored = HistoryRecords.decode("""[{"id":"a","received":1,"user":"deploy","host":"web-04","source":"bastion","service":"SSH access","status":"approved"}]""")
+        assertEquals("deploy requests access to web-04", HistoryRecords.displayText(stored.single()))
+        val blank = HistoryRecords.fromChallenge(request.copy(username = "", system = "", pushText = null), requestedMillis)
+        assertEquals("Unknown user requests access to unknown host", HistoryRecords.displayText(blank))
     }
 
     @Test

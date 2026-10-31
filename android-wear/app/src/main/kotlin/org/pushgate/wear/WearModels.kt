@@ -62,8 +62,10 @@ data class WearChallenge(
     val requestedAt: String?,
     val expiresAt: String,
     val requireBiometric: Boolean,
-    /** The server's one-line approval text, when it sends one. */
-    val pushText: String? = null
+    /** The server's one-line request text, shown as sent. */
+    val pushText: String? = null,
+    /** The server's notification title ("PushGate"), shown as sent. */
+    val pushTitle: String? = null
 ) {
     companion object {
         fun fromPayload(payload: String): WearChallenge {
@@ -82,7 +84,8 @@ data class WearChallenge(
                 requestedAt = optionalString(data, "requested_at") ?: detail?.let { optionalString(it, "timestamp") } ?: optionalString(data, "created_at"),
                 expiresAt = data.optString("expires_at"),
                 requireBiometric = data.optBoolean("require_biometric", true),
-                pushText = optionalString(data, "push_text")
+                pushText = optionalString(data, "push_text"),
+                pushTitle = optionalString(data, "push_title")
             )
         }
 

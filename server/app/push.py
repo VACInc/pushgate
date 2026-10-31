@@ -301,8 +301,8 @@ def unifiedpush_body(device_id: str, payload: dict[str, Any]) -> bytes:
     wire = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
     if len(wire) <= UNIFIEDPUSH_MAX_BYTES:
         return wire
-    keep = ("id", "username", "approver_username", "system", "pam_service", "source_ip", "push_text", "status",
-            "created_at", "expires_at", "requested_at", "require_biometric", "device_id")
+    keep = ("id", "username", "approver_username", "system", "pam_service", "source_ip", "push_title", "push_text",
+            "status", "created_at", "expires_at", "requested_at", "require_biometric", "device_id")
     trimmed = {k: data[k] for k in keep if k in data}
     body["payload"] = json.dumps({"type": "auth_request", "data": trimmed}, sort_keys=True, separators=(",", ":"))
     return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")

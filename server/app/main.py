@@ -28,7 +28,7 @@ from .delivery_watch import UnansweredWatch
 from .ephemeral import build_auth_state
 from .models import ApiKey, AuditLog, AuthLogEntry, AuthRequest, BackupCode, Device, DeviceNonce, Group, Integration, Nonce, Policy, ProvisionerScope, ProvisionedIntegration, Role, Setting, User, UserGroup, now
 from .source_names import LOG as SOURCE_LOG, ensure_log_handler, resolver_from_settings
-from .push_text import parse_display_users, push_text
+from .push_text import parse_display_users, push_text, push_title
 from .push import FanoutDisconnected, build_push_fanout, build_push_provider, unifiedpush_endpoint_allowed
 from .security import (
     DEVICE_KEY_TYPE_ED25519,
@@ -709,6 +709,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         data["push_text"] = push_text(
             auth_req.username, auth_req.pam_service, data["source_ip"], auth_req.system, app.state.display_users
         )
+        data["push_title"] = push_title()
         data["geolocation"] = detail.get("geolocation")
         data["approver_username"] = detail.get("approver_username") or auth_req.username
         requested_at = detail.get("timestamp")

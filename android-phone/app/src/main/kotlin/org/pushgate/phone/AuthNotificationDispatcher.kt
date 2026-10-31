@@ -16,34 +16,27 @@ internal data class NotificationEnrollmentBinding(
 )
 
 /**
- * One plain line, `<user> requests <service> from <source> to <host>`
- * ("Agent requests SSH from workstation to server01"). The server builds it (`push_text`), so the
- * wording changes without an app update; an older server gets the same line built here.
+ * The server owns every word of request text. Its `push_title` ("PushGate") and `push_text`
+ * ("Agent requests SSH from workstation to server01") are shown exactly as sent: notification,
+ * approval screen headline, History line. Any wording change is a server release, never an
+ * app update. Only a server older than 1.0.5 sends no line; then a minimal one stands in.
  * Never a reason or a second line.
  */
+internal const val FALLBACK_TITLE = "PushGate"
+
+internal fun notificationTitle(challenge: AuthChallenge): String =
+    safeDisplayText(challenge.pushTitle).ifBlank { FALLBACK_TITLE }
+
 internal fun notificationText(challenge: AuthChallenge): String =
-    safeDisplayText(challenge.pushText).ifBlank { localPushText(challenge) }
+    requestText(challenge.pushText, challenge.username, challenge.system)
 
-internal fun localPushText(challenge: AuthChallenge): String {
-    val login = safeDisplayText(challenge.username)
-    val user = login.ifBlank { "Unknown user" }
-    val system = safeDisplayText(challenge.system)
-    val service = displayService(safeDisplayText(challenge.pamService), login, system)
-    val source = safeDisplayText(challenge.sourceIp).ifBlank { "unknown source" }
-    return "$user requests $service from $source to ${system.ifBlank { "unknown host" }}"
-}
-
-/** SSH login labels read "SSH"; any other service keeps its name (same rules as the server). */
-internal fun displayService(service: String, login: String, system: String): String {
-    val lowered = service.lowercase()
-    if (service.isEmpty()) return "access"
-    if (lowered in setOf("ssh access", "sshd", "ssh") || lowered == system.lowercase()) return "SSH"
-    if (lowered == "ssh as" || lowered.startsWith("ssh as ")) {
-        val target = service.substring("ssh as".length).trim()
-        return if (target.isEmpty() || target.equals(login, ignoreCase = true)) "SSH" else "SSH as $target"
+/** The server's line as sent; without one (older server) `<user> requests access to <host>`. */
+internal fun requestText(pushText: String?, username: String?, system: String?): String =
+    safeDisplayText(pushText).ifBlank {
+        val user = safeDisplayText(username).ifBlank { "Unknown user" }
+        val host = safeDisplayText(system).ifBlank { "unknown host" }
+        "$user requests access to $host"
     }
-    return service
-}
 
 /**
  * Only an Approve that must show the biometric/device-credential prompt needs a visible
@@ -120,7 +113,7 @@ internal class AuthNotificationDispatcher(private val context: Context) {
         val approve = action(ACTION_APPROVE, "Approve", challenge, binding)
         val notification = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(if (failureNote == null) "PushGate" else "PushGate: approve failed")
+            .setContentTitle(notificationTitle(challenge) + if (failureNote == null) "" else ": approve failed")
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setCategory(Notification.CATEGORY_STATUS)
@@ -162,7 +155,7 @@ internal class AuthNotificationDispatcher(private val context: Context) {
         val text = "$reason\n${notificationText(challenge)}"
         val notification = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("PushGate: approve failed")
+            .setContentTitle(notificationTitle(challenge) + ": approve failed")
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setCategory(Notification.CATEGORY_STATUS)
@@ -244,6 +237,7 @@ internal class AuthNotificationDispatcher(private val context: Context) {
             .putExtra(EXTRA_EXPIRES_AT, challenge.expiresAt)
             .putExtra(EXTRA_REQUIRE_BIOMETRIC, challenge.requireBiometric)
             .putExtra(EXTRA_PUSH_TEXT, challenge.pushText)
+            .putExtra(EXTRA_PUSH_TITLE, challenge.pushTitle)
             .putExtra(EXTRA_DEVICE_ID, binding.deviceId)
             .putExtra(EXTRA_SIGNING_KEY_ALIAS, binding.signingKeyAlias)
 
@@ -267,6 +261,7 @@ internal class AuthNotificationDispatcher(private val context: Context) {
         const val EXTRA_EXPIRES_AT = "expires_at"
         const val EXTRA_REQUIRE_BIOMETRIC = "require_biometric"
         const val EXTRA_PUSH_TEXT = "push_text"
+        const val EXTRA_PUSH_TITLE = "push_title"
         const val EXTRA_DEVICE_ID = "device_id"
         const val EXTRA_SIGNING_KEY_ALIAS = "signing_key_alias"
         private const val NOTIFICATION_ID = 1
@@ -298,7 +293,8 @@ internal class AuthNotificationDispatcher(private val context: Context) {
                 requestedAt = intent.getStringExtra(EXTRA_REQUESTED_AT),
                 expiresAt = intent.getStringExtra(EXTRA_EXPIRES_AT).orEmpty(),
                 requireBiometric = intent.getBooleanExtra(EXTRA_REQUIRE_BIOMETRIC, true),
-                pushText = intent.getStringExtra(EXTRA_PUSH_TEXT)
+                pushText = intent.getStringExtra(EXTRA_PUSH_TEXT),
+                pushTitle = intent.getStringExtra(EXTRA_PUSH_TITLE)
             )
         }
     }

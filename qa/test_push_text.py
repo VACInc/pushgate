@@ -1,4 +1,4 @@
-"""The approval line: `<USER> requests <SERVICE> from <source machine> to <host>`."""
+"""The request text the server owns: title `PushGate`, line `<USER> requests <SERVICE> from <source machine> to <host>`."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ import pytest
 
 from server.app.config import Settings
 from server.app.push import unifiedpush_body
-from server.app.push_text import display_service, display_user, parse_display_users, push_text
+from server.app.push_text import display_service, display_user, parse_display_users, push_text, push_title
 
 # A deployment that shows its automation login under a display name.
 NAMES = parse_display_users("agent:AGENT")
@@ -91,6 +91,7 @@ def test_trimmed_unifiedpush_body_keeps_the_line() -> None:
         "system": "server02",
         "pam_service": "SSH access",
         "source_ip": "server01",
+        "push_title": "PushGate",
         "push_text": "AGENT requests SSH from server01 to server02",
         "geolocation": "x" * 5000,  # forces the trimmed form
         "expires_at": "2026-10-31T00:00:00Z",
@@ -99,3 +100,9 @@ def test_trimmed_unifiedpush_body_keeps_the_line() -> None:
     inner = json.loads(wire["payload"])["data"]
     assert "geolocation" not in inner
     assert inner["push_text"] == "AGENT requests SSH from server01 to server02"
+    assert inner["push_title"] == "PushGate"
+
+
+def test_the_title_is_server_owned() -> None:
+    # The apps show this as it is; changing it is a server release, never an app update.
+    assert push_title() == "PushGate"

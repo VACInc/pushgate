@@ -28,3 +28,7 @@ UnifiedPush and FCM wake the app with a broadcast. Android does not deliver that
 ## Debug logging
 
 Settings > Debug logging is off by default. When on, the app writes one log file per day under its private storage: process starts with Android's recorded reason for the previous exit, crashes with stack traces, push receipt, notification posting (with notification permission and channel state), approve/deny actions and connection changes. Logs are kept for 7 days by default ("Keep logs for" opens a picker: 1, 3, 7, 14 or 30 days) and older days are deleted automatically. "Share log" exports one text file through the Android share sheet. Turning logging off deletes every stored log immediately. Lines are scrubbed before they are written: URLs keep only scheme and host, tokens, signatures, keys and passwords are removed, and identifiers are shortened to their first 8 characters.
+
+## Request text
+
+The server owns every word of request text. The phone shows the server's `push_title` and `push_text` exactly as sent: the notification title and line, the approval screen headline, and the History line (stored with each entry). Structured fields (`id`, `username`, `system`, ...) drive logic only; approve and deny stay bound to the signed request id. Only a server older than 1.0.5 sends no line; then the phone shows a minimal `<user> requests access to <host>` titled `PushGate`. Change wording on the server, never here.

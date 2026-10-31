@@ -28,6 +28,7 @@ object PhoneWearRelayProtocol {
         challenge.geolocation?.let { data.put("geolocation", it) }
         challenge.requestedAt?.let { data.put("requested_at", it) }
         challenge.pushText?.let { data.put("push_text", it) }
+        challenge.pushTitle?.let { data.put("push_title", it) }
         return JSONObject()
             .put("type", "auth_request")
             .put("data", data)
