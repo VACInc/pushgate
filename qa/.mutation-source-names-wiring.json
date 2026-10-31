@@ -1,0 +1,14 @@
+{
+  "name": "source-names-wiring",
+  "sources": [
+    "server/app/main.py"
+  ],
+  "test_cmd": "python -m pytest -q -x qa/test_source_names.py -p no:cacheprovider",
+  "timeout_s": 90,
+  "language": "python",
+  "exclude_lines": [
+    "^(?!.*(?:source_name|display_source)).*"
+  ],
+  "baseline_score": 1.0,
+  "notes": "Mutate only the server wiring of the source name (display, storage in detail, prewarm)."
+}

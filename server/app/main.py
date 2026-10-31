@@ -27,6 +27,7 @@ from .db import Database
 from .delivery_watch import UnansweredWatch
 from .ephemeral import build_auth_state
 from .models import ApiKey, AuditLog, AuthLogEntry, AuthRequest, BackupCode, Device, DeviceNonce, Group, Integration, Nonce, Policy, ProvisionerScope, ProvisionedIntegration, Role, Setting, User, UserGroup, now
+from .source_names import LOG as SOURCE_LOG, ensure_log_handler, resolver_from_settings
 from .push import FanoutDisconnected, build_push_fanout, build_push_provider, unifiedpush_endpoint_allowed
 from .security import (
     DEVICE_KEY_TYPE_ED25519,
@@ -276,14 +277,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         app.state.loop = asyncio.get_running_loop()
         app.state.expirer_task = asyncio.create_task(expire_pending_loop())
+        app.state.source_prewarm_task = asyncio.create_task(prewarm_source_names())
         try:
             yield
         finally:
-            task = app.state.expirer_task
-            if task:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+            for task in (app.state.expirer_task, getattr(app.state, "source_prewarm_task", None)):
+                if task:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+            app.state.source_names.close()
 
     app = FastAPI(
         title="PushGate API",
@@ -298,6 +301,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.auth_state = build_auth_state(settings.redis_url)
     app.state.unanswered_watch = UnansweredWatch()
+    app.state.source_names = resolver_from_settings(settings)
+    if app.state.source_names.enabled:
+        ensure_log_handler()
     app.state.push_fanout = build_push_fanout(settings.redis_url)
     app.state.push_provider = build_push_provider(
         settings.fcm_access_token,
@@ -697,6 +703,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def auth_event(auth_req: AuthRequest, device: Device, db: Session) -> dict[str, Any]:
         data = obj(auth_req)
         detail = auth_req.detail if isinstance(auth_req.detail, dict) else {}
+        data["source_ip"] = display_source(auth_req)
         data["geolocation"] = detail.get("geolocation")
         data["approver_username"] = detail.get("approver_username") or auth_req.username
         requested_at = detail.get("timestamp")
@@ -780,6 +787,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             coro.close()
 
+    def display_source(auth_req: AuthRequest) -> str | None:
+        """The requester as the phone shows it: the server-resolved machine name, else what the helper sent."""
+        detail = auth_req.detail if isinstance(auth_req.detail, dict) else {}
+        name = detail.get("source_name")
+        if isinstance(name, str) and name:
+            return name
+        # A lookup that missed the creation deadline may have finished since: resends,
+        # replays and retries of this request then show the name too.
+        return app.state.source_names.known_name(auth_req.source_ip) or auth_req.source_ip
+
     def emit_auth_syslog(auth_req: AuthRequest) -> None:
         detail = auth_req.detail if isinstance(auth_req.detail, dict) else {}
         app.state.syslog.emit(
@@ -791,6 +808,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "system": auth_req.system,
                 "pam_service": auth_req.pam_service,
                 "source_ip": auth_req.source_ip,
+                "source_name": display_source(auth_req),
                 "status": auth_req.status,
                 "factor": auth_req.factor,
             },
@@ -974,6 +992,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             expire_unconsumed_auth_requests(db)
             if pruned:
                 db.commit()
+
+    async def prewarm_source_names() -> None:
+        """Name the addresses seen in the last week before the first login after a restart."""
+        if not app.state.source_names.enabled:
+            return
+        def recent_sources() -> list[str]:
+            cutoff = (utcnow() - timedelta(days=7)).replace(tzinfo=None)
+            with db_handle.SessionLocal() as db:
+                return list(
+                    db.scalars(
+                        select(AuthRequest.source_ip)
+                        .where(AuthRequest.created_at >= cutoff, AuthRequest.source_ip.is_not(None))
+                        .group_by(AuthRequest.source_ip)
+                        .order_by(func.max(AuthRequest.created_at).desc())
+                        .limit(256)
+                    ).all()
+                )
+        try:
+            sources = await run_in_threadpool(recent_sources)
+            warmed = await app.state.source_names.prewarm(sources)
+            SOURCE_LOG.info("source_name_prewarm addresses=%d", warmed)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            SOURCE_LOG.warning("source_name_prewarm_failed error=%s", exc.__class__.__name__)
 
     async def expire_pending_loop() -> None:
         # Database I/O runs in a worker thread: a stalled connection (for example
@@ -1972,8 +2015,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db: Session,
     ) -> dict[str, Any]:
         # All SQL runs in a worker thread; only fan-out and task scheduling stay
-        # on the event loop.
-        result, publishes, retry = await run_in_threadpool(create_auth_request_sync, integration, payload, db)
+        # on the event loop. The source name lookup is cached and capped
+        # (source_name_timeout_ms), so it never holds a login for long.
+        try:
+            source_name = await app.state.source_names.display_name(payload.get("source_ip"))
+        except Exception:
+            source_name = None
+        result, publishes, retry = await run_in_threadpool(create_auth_request_sync, integration, payload, db, source_name)
         for device_id, event in publishes:
             await app.state.push_fanout.publish([device_id], event)
         if retry is not None:
@@ -1984,6 +2032,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         integration: Integration,
         payload: dict[str, Any],
         db: Session,
+        source_name: Any = None,
     ) -> tuple[dict[str, Any], list[tuple[str, dict[str, Any]]], tuple[str, list[str], int, int] | None]:
         publishes: list[tuple[str, dict[str, Any]]] = []
         retry: tuple[str, list[str], int, int] | None = None
@@ -2013,6 +2062,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
         if attempt_id:
             detail["attempt_id"] = attempt_id
+        if isinstance(source_name, str) and source_name and source_name != source_ip:
+            detail["source_name"] = source_name
         if user.locked:
             status = "denied"
             factor = "lockout"
@@ -2148,6 +2199,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.auth_state.put_pending(auth_req.id, obj(auth_req), pending_ttl(auth_req))
         emit_auth_syslog(auth_req)
         if auth_req.status == "pending":
+            SOURCE_LOG.info(
+                "push_text request=%s text=%s requests %s on %s from %s",
+                auth_req.id[:8],
+                auth_req.username,
+                auth_req.pam_service,
+                auth_req.system,
+                display_source(auth_req) or "-",
+            )
             devices = db.scalars(
                 select(Device).where(Device.user_id == approver_user.id, Device.revoked.is_(False), Device.public_key.is_not(None))
             ).all()

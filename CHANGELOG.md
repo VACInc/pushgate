@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Server-side requester names: with `PUSHGATE_SOURCE_NAME_SUFFIX` set, a raw client address in `source_ip` is shown as the shortest forward-confirmed PTR machine name under that suffix, for every helper. Cached, prewarmed, capped at `PUSHGATE_SOURCE_NAME_TIMEOUT_MS` (300 ms) per login; explicit resolvers or the system resolver. Display only: dedupe and trusted sessions keep the value the helper sent. See docs/configuration.md.
 - Phone Settings: Debug logging uses standard settings rows (a switch row, a "Keep logs for" picker, Share log) that fit at any font size. Screenshots and screen recording are allowed on every phone screen except the enrollment QR scanner.
 - Phone and watch approval notifications name the host once ("user requests host from address"); an optional request reason, when the server supplies one, shows on a second line.
 

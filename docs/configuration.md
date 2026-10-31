@@ -59,3 +59,30 @@ wildcard origins or a broad origin regex: the custom header forces a browser
 preflight, which must reject hostile origins. The identity proxy must forward
 this client header, never inject it automatically. Keep stripping untrusted
 identity assertions and validating the proxy secret and administrator groups.
+
+## Requester names
+
+Login helpers send the connecting client as `source_ip`, and the phone shows it as
+`... from <source>`. When `PUSHGATE_SOURCE_NAME_SUFFIX` is set, the server turns a
+raw address into the shortest machine name under that DNS suffix, so every helper
+shows the same short name without a per-host change. A helper that already sent a
+name is left alone.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `PUSHGATE_SOURCE_NAME_LOOKUP` | `true` | Master switch. `false` shows every source as sent. |
+| `PUSHGATE_SOURCE_NAME_SUFFIX` | empty | DNS suffix of machine names, for example `lan.example.test`. Empty turns the lookup off. |
+| `PUSHGATE_SOURCE_NAME_RESOLVERS` | empty | Comma list of DNS servers, `host[:port]` or `[v6]:port`, asked in order. Empty uses the system resolver. |
+| `PUSHGATE_SOURCE_NAME_TIMEOUT_MS` | `300` | Longest a login waits for a name. A slower lookup finishes in the background and that login shows the address. |
+| `PUSHGATE_SOURCE_NAME_QUERY_TIMEOUT_MS` | `1000` | Per-resolver query timeout for the background lookup. |
+| `PUSHGATE_SOURCE_NAME_TTL_SECONDS` | `3600` | How long a name is cached. An expired name is still shown while it is refreshed. |
+| `PUSHGATE_SOURCE_NAME_NEGATIVE_TTL_SECONDS` | `60` | How long a failed lookup is cached. |
+
+A reverse (PTR) name is used only when it is under the suffix and resolves forward
+to the same address; among several, the shortest wins. The name is display only:
+request dedupe and trusted sessions keep the value the helper sent, the auth log
+keeps the raw `source_ip` and records the shown name as `detail.source_name`.
+Addresses seen in the last week are looked up at startup. Each new pending request
+logs one `pushgate.source` line, `push_text request=<id> text=<user> requests
+<service> on <system> from <source>`, so the shown text can be checked in the
+server log.

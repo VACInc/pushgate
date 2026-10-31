@@ -68,6 +68,19 @@ class Settings(BaseSettings):
     # Connected phone streams re-read pending/settled requests from the shared
     # database this often, so events published on another edge still arrive.
     ws_reconcile_seconds: float = _setting("WS_RECONCILE_SECONDS", 5.0, ge=0.1, le=300)
+    # Requester names: when a login helper sends a raw client address as source_ip, show the
+    # shortest machine name under SOURCE_NAME_SUFFIX instead (PTR, confirmed forward). An empty
+    # suffix leaves every source as sent. RESOLVERS is a comma list of DNS servers (host[:port]);
+    # empty uses the system resolver. A login waits at most TIMEOUT_MS for a name, then shows the
+    # address while the lookup finishes in the background. Display only: dedupe and trusted
+    # sessions keep the value the helper sent.
+    source_name_lookup: bool = _setting("SOURCE_NAME_LOOKUP", True)
+    source_name_suffix: str = _setting("SOURCE_NAME_SUFFIX", "")
+    source_name_resolvers: str = _setting("SOURCE_NAME_RESOLVERS", "")
+    source_name_timeout_ms: int = _setting("SOURCE_NAME_TIMEOUT_MS", 300, ge=0, le=5000)
+    source_name_query_timeout_ms: int = _setting("SOURCE_NAME_QUERY_TIMEOUT_MS", 1000, ge=50, le=10000)
+    source_name_ttl_seconds: int = _setting("SOURCE_NAME_TTL_SECONDS", 3600, ge=1, le=604800)
+    source_name_negative_ttl_seconds: int = _setting("SOURCE_NAME_NEGATIVE_TTL_SECONDS", 60, ge=1, le=86400)
     rate_limit_per_minute: int = _setting("RATE_LIMIT_PER_MINUTE", 600, ge=1, le=100000)
     rate_limit_window_seconds: int = _setting("RATE_LIMIT_WINDOW_SECONDS", 60, ge=1, le=3600)
     static_dir: str | None = _setting("STATIC_DIR", None)
@@ -92,6 +105,14 @@ class Settings(BaseSettings):
         "CORS_ALLOW_ORIGIN_REGEX",
         None,
     )
+
+    @field_validator("source_name_resolvers")
+    @classmethod
+    def validate_source_name_resolvers(cls, value: str) -> str:
+        from .source_names import parse_resolvers
+
+        parse_resolvers(value)
+        return value
 
     @field_validator("bootstrap_token")
     @classmethod

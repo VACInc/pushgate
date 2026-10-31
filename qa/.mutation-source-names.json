@@ -1,0 +1,14 @@
+{
+  "name": "source-names",
+  "sources": [
+    "server/app/source_names.py"
+  ],
+  "test_cmd": "python -m pytest -q -x qa/test_source_names.py -p no:cacheprovider",
+  "timeout_s": 90,
+  "language": "python",
+  "exclude_lines": [
+    "^\\s*(?:#|\"\"\"|LOG\\.|self\\.log\\.|__all__)"
+  ],
+  "baseline_score": 0.8,
+  "notes": "Server-side requester names: address parsing, suffix match, PTR/forward lookup, cache, time cap."
+}
