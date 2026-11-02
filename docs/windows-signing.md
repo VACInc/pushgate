@@ -151,3 +151,17 @@ No matching event alone proves nothing; require positive fresh-process load and
 real sign-in outcome. Keep before/after receipts private because event logs and
 paths can identify accounts. If the DLL is blocked, preserve logs and use the
 stock recovery path. Do not disable SAC or weaken policy to make the check pass.
+
+## Staged source package, not published
+
+The local candidate now includes Windows source, explicit-account provisioning,
+install/removal documentation, privacy disclosure, runtime license notices and
+version resource. The Makefile links that resource into the DLL. A separate
+Windows CI workflow builds safe native tests and runs them on a hosted runner
+without provider registration. Version is 0.1.0.0. This closes preparation gaps;
+public release and platform execution remain approval gates. Private deployment
+notes and host/account identifiers are excluded.
+
+Do not set SIGNPATH_READY merely because these files exist. After approved
+publication, require the Windows CI result for the exact release commit before
+creating a signing request. Keep every signing request manually approved.

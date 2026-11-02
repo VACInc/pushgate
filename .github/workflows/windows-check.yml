@@ -1,0 +1,48 @@
+name: Windows candidate checks
+on:
+  pull_request:
+    paths: ['windows/**', '.github/workflows/windows-check.yml']
+  push:
+    paths: ['windows/**', '.github/workflows/windows-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends g++-mingw-w64-x86-64-posix
+      - run: make -C windows all build/unit.exe build/packed.exe build/load.exe build/scope.exe
+      - run: python3 qa/signing/test_candidate.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-native-tests
+          path: windows/
+          if-no-files-found: error
+  native:
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: windows-native-tests
+          path: windows
+      - name: Test mocked policy, packed input, metadata and DLL load
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($name in @('unit','scope','packed')) {
+            & "./windows/build/$name.exe"
+            if($LASTEXITCODE -ne 0) { throw "$name tests failed" }
+          }
+          & ./windows/build/load.exe (Resolve-Path ./windows/build/PushGateWin.dll).Path
+          if($LASTEXITCODE -ne 0) { throw 'DLL load failed' }
+          $v=(Get-Item ./windows/build/PushGateWin.dll).VersionInfo
+          if($v.ProductName -ne 'PushGate' -or $v.ProductVersion -ne '0.1.0.0') { throw 'Missing or wrong product metadata' }
+          & ./windows/tests/parse.ps1
+          & ./windows/tests/client.ps1
