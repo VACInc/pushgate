@@ -71,3 +71,9 @@ Python runtime and PAM requirements are pinned with hashes; npm uses its lockfil
 Public Android IDs are `org.pushgate.phone` and `org.pushgate.wear`. They install as new apps and need fresh enrollment. Use your own release-signing identity. Their distinct IDs mean they communicate with the server independently; cross-app Wear Data Layer is not supported.
 
 Apache-2.0 licensed. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Dependencies and the Gradle wrapper retain their own licenses.
+
+## Code signing policy
+
+Windows signing is [being prepared](docs/windows-signing.md), is disabled, and
+no Foundation application has been submitted. Current releases are not claimed
+to be signed.
