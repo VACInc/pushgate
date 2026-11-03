@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select, text, update
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import DataError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -595,7 +595,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                "locked" in str(exc.orig).lower()):
             return JSONResponse(status_code=503, content={"detail": {
                 "code": "database_busy", "message": "Reconcile state before retrying creation"}})
+        if exc.connection_invalidated or (db_handle.engine.dialect.name == "postgresql" and (
+                code is None or str(code).startswith(("08", "57")))):
+            # Lost or refused database connection (failover, restart): a retryable
+            # outage, never a plain 500.
+            return JSONResponse(status_code=503, content={"detail": {
+                "code": "database_unavailable", "message": "database temporarily unavailable"}})
         raise exc
+
+    @app.exception_handler(DataError)
+    async def database_rejected_value(request: Request, exc: DataError):
+        # A value the database refuses (too long, NUL, bad encoding) is a bad
+        # request: answer 4xx so no client reads it as a server outage.
+        return JSONResponse(status_code=422, content={"detail": {
+            "code": "invalid_request_data", "message": "request contains a value the server cannot store"}})
 
     def lock_provisioning(db: Session) -> None:
         # One lock shared by creates AND rebinding, independent of principal/key.
@@ -893,6 +906,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return candidate
         return None
 
+    # Widths of the auth_requests text columns. PostgreSQL refuses a longer value
+    # (or one with a NUL), so check before any SQL and answer 422, not a 500.
+    AUTH_TEXT_LIMITS = {"system": 128, "pam_service": 64, "source_ip": 64}
+
+    def text_fits(value: str, limit: int) -> bool:
+        return len(value) <= limit and "\x00" not in value
+
+    def validate_auth_text(payload: dict[str, Any]) -> None:
+        """Type and length checks for the caller-supplied text a request stores."""
+        for field in ("pam_service", "source_ip"):
+            value = payload.get(field)
+            if value is None:
+                continue
+            limit = AUTH_TEXT_LIMITS[field]
+            if not isinstance(value, str) or not text_fits(value, limit):
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": f"invalid_{field}", "message": f"{field} must be text of at most {limit} characters"},
+                )
+
     def auth_attempt_id(payload: dict[str, Any]) -> str | None:
         value = payload.get("attempt_id")
         if value is None:
@@ -1082,7 +1115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return "device_not_enrolled"
         try:
             ts = datetime.fromtimestamp(int(timestamp), timezone.utc)
-        except ValueError:
+        except (ValueError, OverflowError, OSError):
             return "bad_timestamp"
         if abs((utcnow() - ts).total_seconds()) > settings.hmac_window_seconds:
             return "clock_skew"
@@ -1107,7 +1140,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=401, detail={"code": "missing_signature", "message": "signed integration headers required"})
         try:
             ts = datetime.fromtimestamp(int(timestamp), timezone.utc)
-        except ValueError:
+        except (ValueError, OverflowError, OSError):
             raise HTTPException(status_code=401, detail={"code": "bad_timestamp", "message": "timestamp must be unix seconds"}) from None
         if abs((utcnow() - ts).total_seconds()) > settings.hmac_window_seconds:
             raise HTTPException(status_code=401, detail={"code": "clock_skew", "message": "signed request outside clock-skew window"})
@@ -1638,7 +1671,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=403, detail={"code": "device_not_enrolled"})
         try:
             ts = datetime.fromtimestamp(int(payload.timestamp), timezone.utc)
-        except ValueError:
+        except (ValueError, OverflowError, OSError):
             raise HTTPException(status_code=401, detail={"code": "bad_timestamp", "message": "timestamp must be unix seconds"}) from None
         if abs((utcnow() - ts).total_seconds()) > settings.hmac_window_seconds:
             raise HTTPException(status_code=401, detail={"code": "clock_skew", "message": "signed request outside clock-skew window"})
@@ -2005,8 +2038,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail={"code": "unknown_approver"})
 
         requested_system = payload.get("system")
-        if requested_system is not None and (not isinstance(requested_system, str) or not requested_system):
-            raise HTTPException(status_code=422, detail={"code": "invalid_system"})
+        if requested_system is not None and (
+            not isinstance(requested_system, str) or not requested_system or not text_fits(requested_system, AUTH_TEXT_LIMITS["system"])
+        ):
+            raise HTTPException(status_code=422, detail={"code": "invalid_system", "message": "system must be 1-128 characters"})
         if integration.system_name:
             if requested_system and requested_system != integration.system_name:
                 raise HTTPException(status_code=403, detail={"code": "system_binding_mismatch"})
@@ -2023,6 +2058,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # All SQL runs in a worker thread; only fan-out and task scheduling stay
         # on the event loop. The source name lookup is cached and capped
         # (source_name_timeout_ms), so it never holds a login for long.
+        validate_auth_text(payload)
         try:
             source_name = await app.state.source_names.display_name(payload.get("source_ip"))
         except Exception:
@@ -2043,6 +2079,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         publishes: list[tuple[str, dict[str, Any]]] = []
         retry: tuple[str, list[str], int, int] | None = None
         user, approver_user, system_name = resolve_auth_context(integration, payload, db)
+        validate_auth_text(payload)
         fail_mode = effective_fail_mode(db, user, integration)
         global_settings = effective_settings(db, user, integration)
         server_received_at = utcnow()
@@ -2417,7 +2454,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         wait_value = payload.get("wait_seconds")
         try:
             requested_wait = int(wait_value) if wait_value is not None else None
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise HTTPException(status_code=422, detail={"code": "bad_wait_seconds", "message": "wait_seconds must be an integer"}) from None
         if requested_wait is not None and requested_wait < 0:
             raise HTTPException(status_code=422, detail={"code": "bad_wait_seconds", "message": "wait_seconds must be non-negative"})

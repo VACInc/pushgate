@@ -28,11 +28,16 @@ def random_secret(bytes_len: int = 32) -> str:
 
 
 def hash_value(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return hashlib.sha256(value.encode("utf-8", "surrogatepass")).hexdigest()
 
 
 def constant_eq(left: str, right: str) -> bool:
-    return hmac.compare_digest(left, right)
+    # compare_digest refuses str values with non-ASCII characters (TypeError).
+    # Untrusted headers can carry any text, so compare the UTF-8 bytes instead:
+    # a mismatch is a plain False, never an unhandled error.
+    if not isinstance(left, str) or not isinstance(right, str):
+        return False
+    return hmac.compare_digest(left.encode("utf-8", "surrogatepass"), right.encode("utf-8", "surrogatepass"))
 
 
 def integration_signature(secret: str, method: str, path: str, body: bytes, timestamp: str, nonce: str) -> str:

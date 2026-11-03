@@ -36,6 +36,9 @@ validate_timeout = _VALIDATION.validate_timeout
 DEFAULT_CACHE_DIR = "/etc/pushgate/failmode.d"
 DEFAULT_CONFIG_FILE = "/etc/pushgate/pushgate.env"
 DEFAULT_CACHE_MAX_AGE = 86400
+# Only these answers (gateway/unavailable/timeout) or a failed connection mean
+# PushGate is down and may use the cached outage policy.
+OUTAGE_STATUS = frozenset({502, 503, 504})
 _CLOCK_SKEW_SECONDS = 300
 _BACKUP_CODE_TOMBSTONES = "backup_code_tombstones"
 _SERVER_SNAPSHOT_AT = "server_snapshot_at"
@@ -714,10 +717,11 @@ def authenticate(
     except httpx.HTTPStatusError as exc:
         if time.monotonic() >= deadline:
             return 1
-        if 500 <= exc.response.status_code < 600:
+        if exc.response.status_code in OUTAGE_STATUS:
             return _outage_decision(cfg, username, local_cache, offline_code, expected_binding)
-        # Non-5xx status errors, including redirects and client failures, must
-        # never use cached outage behavior.
+        # Every other status error, including a plain 500, redirects and client
+        # failures, must never use cached outage behavior: a 500 can be caused
+        # by the request itself, so it is not evidence that PushGate is down.
         return 1
     except (KeyError, TypeError, ValueError):
         # Malformed successful responses are never an outage and must not use
