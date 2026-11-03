@@ -623,6 +623,33 @@ def test_local_protocol_error_never_uses_fail_open_cache(tmp_path, monkeypatch):
     assert pushgate_pam.authenticate("alice", cfg=cfg) == 1
 
 
+@pytest.mark.parametrize("status", [502, 503, 504])
+def test_gateway_outage_statuses_use_fresh_bound_fail_open_cache(tmp_path, monkeypatch, status):
+    cfg = pushgate_pam.AuthConfig(
+        "https://pushgate.example", "id", "secret", str(tmp_path), timeout=1,
+        system_name="labbox", require_cache_binding=True,
+    )
+    cached = _cache("alice", fail_mode="open", binding=pushgate_pam.cache_binding(cfg, "alice", "labbox"))
+    pushgate_pam.write_cache(tmp_path, "alice", cached)
+    _mock_client(monkeypatch, lambda _request: httpx.Response(status))
+
+    assert pushgate_pam.authenticate("alice", cfg=cfg) == 0
+
+
+@pytest.mark.parametrize("status", [500, 501, 505, 599])
+def test_other_5xx_never_uses_fail_open_cache(tmp_path, monkeypatch, status):
+    # A 500 can come from the request itself (bad input), so it is not an outage.
+    cfg = pushgate_pam.AuthConfig(
+        "https://pushgate.example", "id", "secret", str(tmp_path), timeout=1,
+        system_name="labbox", require_cache_binding=True,
+    )
+    cached = _cache("alice", fail_mode="open", binding=pushgate_pam.cache_binding(cfg, "alice", "labbox"))
+    pushgate_pam.write_cache(tmp_path, "alice", cached)
+    _mock_client(monkeypatch, lambda _request: httpx.Response(status))
+
+    assert pushgate_pam.authenticate("alice", cfg=cfg) == 1
+
+
 @pytest.mark.parametrize("invalid_cache", ["stale", "closed", "binding-mismatch"])
 def test_503_denies_without_fresh_bound_fail_open_cache(tmp_path, monkeypatch, invalid_cache):
     cfg = pushgate_pam.AuthConfig(

@@ -1,0 +1,17 @@
+{
+  "name": "pushgate-input-hardening",
+  "sources": [
+    "server/app/main.py",
+    "server/app/security.py",
+    "server/app/push_text.py",
+    "pam/pushgate_pam.py"
+  ],
+  "test_cmd": "python -m pytest -q -x qa/test_input_hardening.py qa/test_push_text.py pam/test_pushgate_pam_security.py -k \"not installer\" -p no:cacheprovider",
+  "timeout_s": 180,
+  "language": "python",
+  "exclude_lines": [
+    "^(?!.*(return len\\(value\\) <= limit and|if not isinstance\\(value, str\\) or not text_fits\\(value, limit\\)|not isinstance\\(requested_system, str\\) or not requested_system or not text_fits|AUTH_TEXT_LIMITS = |except \\(ValueError, OverflowError, OSError\\)|except \\(TypeError, ValueError, OverflowError\\)|if not isinstance\\(left, str\\) or not isinstance\\(right, str\\)|return hmac\\.compare_digest\\(left\\.encode|code is None or str\\(code\\)\\.startswith|status_code=422, content=|if len\\(text\\) > MAX_NAME_CHARS|text = \"\\\\u2026\" \\+ text|text = \"_\"\\.join|MAX_NAME_CHARS = 40|OUTAGE_STATUS = frozenset|if exc\\.response\\.status_code in OUTAGE_STATUS)).*"
+  ],
+  "baseline_score": 1.0,
+  "notes": "Untrusted request text and numbers answer 4xx (never 500); only 502/503/504 or a failed connection reach the PAM outage policy; machine names in the approval line are one token, trimmed from the left. Set PUSHGATE_TEST_POSTGRES_URL to include the PostgreSQL cases."
+}

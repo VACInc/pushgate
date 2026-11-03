@@ -21,6 +21,11 @@ _SSH_SERVICES = {"ssh access", "sshd", "ssh"}
 # The notification title. The apps show it as it is.
 PUSH_TITLE = "PushGate"
 
+# Longest machine name the line shows. A longer one keeps its right end (the
+# domain part) behind a leading ellipsis, so a long or padded name can never push
+# the rest of the line out of a notification.
+MAX_NAME_CHARS = 40
+
 
 def _clean(value: object) -> str:
     """One line of plain text: control characters become spaces, runs collapse."""
@@ -28,6 +33,14 @@ def _clean(value: object) -> str:
         return ""
     text = "".join(" " if not ch.isprintable() else ch for ch in str(value))
     return " ".join(text.split())
+
+
+def _machine(value: object) -> str:
+    """A machine name as one token: no inner spaces, at most MAX_NAME_CHARS, trimmed from the left."""
+    text = "_".join(_clean(value).split())
+    if len(text) > MAX_NAME_CHARS:
+        text = "\u2026" + text[-(MAX_NAME_CHARS - 1):]
+    return text
 
 
 def parse_display_users(value: str | None) -> dict[str, str]:
@@ -82,8 +95,8 @@ def push_text(
     """`<USER> requests <SERVICE> from <source machine> to <host>`."""
     user = display_user(username, display_users)
     service = display_service(pam_service, username, system)
-    src = _clean(source) or "unknown source"
-    dest = _clean(system) or "unknown host"
+    src = _machine(source) or "unknown source"
+    dest = _machine(system) or "unknown host"
     return f"{user} requests {service} from {src} to {dest}"
 
 

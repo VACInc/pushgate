@@ -81,7 +81,30 @@ def test_source_falls_back_to_the_address_and_placeholders() -> None:
 def test_one_line_only() -> None:
     text = push_text_("agent\n", "SSH\taccess", "server01\r\nreason: x", "server02\x00")
     assert "\n" not in text and "\r" not in text and "\x00" not in text and "\t" not in text
-    assert text == "AGENT requests SSH from server01 reason: x to server02"
+    assert text == "AGENT requests SSH from server01_reason:_x to server02"
+
+
+def test_a_machine_name_is_one_token() -> None:
+    # A caller-sent source can never add words that read as another destination.
+    assert push_text_("agent", "SSH access", "server01 to server09", "edge") == "AGENT requests SSH from server01_to_server09 to edge"
+    assert push_text_("agent", "SSH access", "server01", "server02  extra") == "AGENT requests SSH from server01 to server02_extra"
+
+
+def test_long_machine_names_are_trimmed_from_the_left() -> None:
+    source = "a" * 30 + ".long-subdomain.example.com"
+    text = push_text_("agent", "SSH access", source, "server02")
+    shown = text.split(" from ", 1)[1].rsplit(" to ", 1)[0]
+    assert len(shown) == 40
+    assert shown == "\u2026" + source[-39:]
+    assert shown.endswith(".long-subdomain.example.com")
+    assert text.endswith(" to server02")
+    host = "h" * 100 + ".example.net"
+    assert push_text_("agent", "SSH access", "server01", host) == "AGENT requests SSH from server01 to \u2026" + host[-39:]
+    # Names up to the limit, and addresses, are shown whole.
+    exact = "x" * 40
+    assert push_text_("agent", "SSH access", exact, "server02") == f"AGENT requests SSH from {exact} to server02"
+    v6 = "2001:db8:1234:5678:9abc:def0:1234:5678"
+    assert push_text_("agent", "SSH access", v6, "server02") == f"AGENT requests SSH from {v6} to server02"
 
 
 def test_trimmed_unifiedpush_body_keeps_the_line() -> None:
