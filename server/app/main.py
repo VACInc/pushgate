@@ -10,13 +10,13 @@ import time
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session
@@ -50,6 +50,23 @@ from .security import (
 from .syslog_export import SyslogExporter
 
 
+class PatchModel(BaseModel):
+    """A partial update: a field may be left out, but a NOT NULL column never set to null.
+
+    Without this check a null reaches the database and comes back as a 500 or
+    a misleading conflict instead of a 422.
+    """
+
+    non_null: ClassVar[tuple[str, ...]] = ()
+
+    @model_validator(mode="after")
+    def reject_null_required(self):
+        nulled = [name for name in self.non_null if name in self.model_fields_set and getattr(self, name) is None]
+        if nulled:
+            raise ValueError(f"{', '.join(nulled)} cannot be null")
+        return self
+
+
 class UserIn(BaseModel):
     username: str
     display_name: str | None = None
@@ -57,7 +74,8 @@ class UserIn(BaseModel):
     locked: bool = False
 
 
-class UserPatch(BaseModel):
+class UserPatch(PatchModel):
+    non_null = ('locked',)
     display_name: str | None = None
     fail_mode: str | None = Field(default=None, pattern="^(open|closed)$")
     locked: bool | None = None
@@ -68,7 +86,8 @@ class GroupIn(BaseModel):
     description: str | None = None
 
 
-class GroupPatch(BaseModel):
+class GroupPatch(PatchModel):
+    non_null = ('name',)
     name: str | None = None
     description: str | None = None
 
@@ -83,7 +102,8 @@ class DeviceIn(BaseModel):
     require_biometric: bool = False
 
 
-class DevicePatch(BaseModel):
+class DevicePatch(PatchModel):
+    non_null = ('name', 'revoked', 'require_biometric')
     name: str | None = None
     key_type: str | None = Field(default=None, pattern="^(ed25519|ecdsa_p256)$")
     public_key: str | None = Field(default=None, min_length=1)
@@ -103,7 +123,8 @@ class IntegrationIn(BaseModel):
     enabled: bool = True
 
 
-class IntegrationPatch(BaseModel):
+class IntegrationPatch(PatchModel):
+    non_null = ('name', 'enabled')
     name: str | None = None
     principal_username: str | None = Field(default=None, min_length=1, max_length=128)
     approver_username: str | None = Field(default=None, min_length=1, max_length=128)
@@ -125,7 +146,8 @@ class PolicyIn(BaseModel):
     enabled: bool = True
 
 
-class PolicyPatch(BaseModel):
+class PolicyPatch(PatchModel):
+    non_null = ('name', 'enabled')
     name: str | None = None
     description: str | None = None
     fail_mode: str | None = Field(default=None, pattern="^(open|closed)$")
@@ -143,7 +165,8 @@ class RoleIn(BaseModel):
     enabled: bool = True
 
 
-class RolePatch(BaseModel):
+class RolePatch(PatchModel):
+    non_null = ('permissions', 'enabled')
     description: str | None = None
     permissions: dict[str, bool] | None = None
     enabled: bool | None = None
@@ -162,7 +185,8 @@ class ProvisionerIn(BaseModel):
     systems: list[str] = Field(min_length=1, max_length=512)
 
 
-class ApiKeyPatch(BaseModel):
+class ApiKeyPatch(PatchModel):
+    non_null = ('name', 'role', 'enabled')
     name: str | None = None
     role: str | None = None
     enabled: bool | None = None
