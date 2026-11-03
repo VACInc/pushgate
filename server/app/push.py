@@ -151,6 +151,25 @@ class RedisPushFanout(PushFanout):
         return f"pushgate:device:{device_id}"
 
 
+class FirstFailure:
+    """Delivery tries every device; one bad token or provider never skips the rest.
+
+    Remember the first error and raise it once every device has been tried, so
+    the caller still logs the failure.
+    """
+
+    def __init__(self) -> None:
+        self.error: Exception | None = None
+
+    def note(self, exc: Exception) -> None:
+        if self.error is None:
+            self.error = exc
+
+    def raise_first(self) -> None:
+        if self.error is not None:
+            raise self.error
+
+
 class PushProvider:
     async def notify_auth_request(self, devices: Iterable[dict[str, Any]], payload: dict[str, Any]) -> dict[str, Any]:
         return {"sent": 0}
@@ -181,6 +200,7 @@ class FcmPushProvider(PushProvider):
         endpoint = self.endpoint.format(project_id=self.project_id)
         serialized_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         sent = 0
+        failures = FirstFailure()
         async with httpx.AsyncClient(timeout=5.0) as client:
             for device_id, token in targets:
                 data = {
@@ -188,13 +208,18 @@ class FcmPushProvider(PushProvider):
                     "device_id": device_id,
                     "payload": serialized_payload,
                 }
-                response = await client.post(
-                    endpoint,
-                    json={"message": {"token": token, "data": data, "android": {"priority": "high"}}},
-                    headers={"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"},
-                )
-                response.raise_for_status()
+                try:
+                    response = await client.post(
+                        endpoint,
+                        json={"message": {"token": token, "data": data, "android": {"priority": "high"}}},
+                        headers={"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"},
+                    )
+                    response.raise_for_status()
+                except Exception as exc:
+                    failures.note(exc)
+                    continue
                 sent += 1
+        failures.raise_first()
         return {"sent": sent}
 
     async def notify_event(self, devices: Iterable[dict[str, Any]], event: dict[str, Any]) -> dict[str, Any]:
@@ -208,16 +233,22 @@ class FcmPushProvider(PushProvider):
         endpoint = self.endpoint.format(project_id=self.project_id)
         serialized = json.dumps(event, sort_keys=True, separators=(",", ":"))
         sent = 0
+        failures = FirstFailure()
         async with httpx.AsyncClient(timeout=5.0) as client:
             for device_id, token in targets:
                 data = {"type": str(event.get("type", "")), "device_id": device_id, "payload": serialized}
-                response = await client.post(
-                    endpoint,
-                    json={"message": {"token": token, "data": data, "android": {"priority": "high"}}},
-                    headers={"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"},
-                )
-                response.raise_for_status()
+                try:
+                    response = await client.post(
+                        endpoint,
+                        json={"message": {"token": token, "data": data, "android": {"priority": "high"}}},
+                        headers={"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"},
+                    )
+                    response.raise_for_status()
+                except Exception as exc:
+                    failures.note(exc)
+                    continue
                 sent += 1
+        failures.raise_first()
         return {"sent": sent}
 
 
@@ -241,7 +272,12 @@ class NtfyWakeupProvider(PushProvider):
 
     async def notify_auth_request(self, devices: Iterable[dict[str, Any]], payload: dict[str, Any]) -> dict[str, Any]:
         devices = list(devices)
-        inner = await self.inner.notify_auth_request(devices, payload)
+        failures = FirstFailure()
+        try:
+            inner = await self.inner.notify_auth_request(devices, payload)
+        except Exception as exc:
+            failures.note(exc)
+            inner = {}
         data = payload.get("data") if isinstance(payload, dict) else None
         data = data if isinstance(data, dict) else {}
         text = str(data.get("push_text") or "") or push_text(
@@ -254,9 +290,13 @@ class NtfyWakeupProvider(PushProvider):
         }
         if self.auth:
             headers["Authorization"] = self.auth
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(self.url, content=body.encode("utf-8"), headers=headers)
-            response.raise_for_status()
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(self.url, content=body.encode("utf-8"), headers=headers)
+                response.raise_for_status()
+        except Exception as exc:
+            failures.note(exc)
+        failures.raise_first()
         return {"sent": int(inner.get("sent", 0)) + 1, "wakeup": "ntfy"}
 
     async def notify_event(self, devices: Iterable[dict[str, Any]], event: dict[str, Any]) -> dict[str, Any]:
@@ -340,23 +380,39 @@ class UnifiedPushProvider(PushProvider):
         devices = list(devices)
         up_devices = [d for d in devices if is_unifiedpush_endpoint(d.get("push_token")) and self._deliverable(d)]
         others = [d for d in devices if not is_unifiedpush_endpoint(d.get("push_token"))]
-        result = await self.inner.notify_auth_request(others, payload) if others else {"sent": 0}
+        failures = FirstFailure()
+        try:
+            result = await self.inner.notify_auth_request(others, payload) if others else {"sent": 0}
+        except Exception as exc:
+            failures.note(exc)
+            result = {}
         sent = int(result.get("sent", 0))
         if not up_devices:
+            failures.raise_first()
             return {"sent": sent}
         async with httpx.AsyncClient(timeout=5.0) as client:
             for device in up_devices:
                 endpoint = device["push_token"]
-                response = await client.post(endpoint, content=unifiedpush_body(str(device.get("id", "")), payload), headers=self._headers(endpoint))
-                response.raise_for_status()
+                try:
+                    response = await client.post(endpoint, content=unifiedpush_body(str(device.get("id", "")), payload), headers=self._headers(endpoint))
+                    response.raise_for_status()
+                except Exception as exc:
+                    failures.note(exc)
+                    continue
                 sent += 1
+        failures.raise_first()
         return {"sent": sent, "unifiedpush": len(up_devices)}
 
     async def notify_event(self, devices: Iterable[dict[str, Any]], event: dict[str, Any]) -> dict[str, Any]:
         devices = list(devices)
         up_devices = [d for d in devices if is_unifiedpush_endpoint(d.get("push_token")) and self._deliverable(d)]
         others = [d for d in devices if not is_unifiedpush_endpoint(d.get("push_token"))]
-        result = await self.inner.notify_event(others, event) if others else {"sent": 0}
+        failures = FirstFailure()
+        try:
+            result = await self.inner.notify_event(others, event) if others else {"sent": 0}
+        except Exception as exc:
+            failures.note(exc)
+            result = {}
         sent = int(result.get("sent", 0))
         data = event.get("data") if isinstance(event, dict) else None
         data = dict(data) if isinstance(data, dict) else {}
@@ -368,9 +424,14 @@ class UnifiedPushProvider(PushProvider):
                 if len(wire) > UNIFIEDPUSH_MAX_BYTES:
                     body["data"] = {"id": data.get("id"), "status": data.get("status")}
                     wire = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
-                response = await client.post(endpoint, content=wire, headers=self._headers(endpoint))
-                response.raise_for_status()
+                try:
+                    response = await client.post(endpoint, content=wire, headers=self._headers(endpoint))
+                    response.raise_for_status()
+                except Exception as exc:
+                    failures.note(exc)
+                    continue
                 sent += 1
+        failures.raise_first()
         return {"sent": sent, "unifiedpush": len(up_devices)}
 
 
