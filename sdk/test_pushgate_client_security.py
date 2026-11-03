@@ -11,12 +11,14 @@ import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 from pushgate.client import PushGateAdminClient
 
 
 def _private_ca_server(tmp_path):
+    # Python 3.13 verifies with VERIFY_X509_STRICT by default (RFC 5280): the CA
+    # needs key usage and a subject key id, the leaf an authority key id.
     now = datetime.now(timezone.utc)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "PushGate test CA")])
@@ -29,6 +31,14 @@ def _private_ca_server(tmp_path):
         .not_valid_before(now - timedelta(minutes=1))
         .not_valid_after(now + timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True, content_commitment=False, key_encipherment=False, data_encipherment=False,
+                key_agreement=False, key_cert_sign=True, crl_sign=True, encipher_only=False, decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
         .sign(ca_key, hashes.SHA256())
     )
     server_key = ec.generate_private_key(ec.SECP256R1())
@@ -46,6 +56,16 @@ def _private_ca_server(tmp_path):
             critical=False,
         )
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True, content_commitment=False, key_encipherment=False, data_encipherment=False,
+                key_agreement=False, key_cert_sign=False, crl_sign=False, encipher_only=False, decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(server_key.public_key()), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
         .sign(ca_key, hashes.SHA256())
     )
     ca_path = tmp_path / "ca.pem"
@@ -91,6 +111,8 @@ def test_sdk_can_trust_an_explicit_private_ca(tmp_path):
                 untrusted.users()
 
         context = ssl.create_default_context(cafile=ca_path)
+        # Strict on every Python, not only 3.13 where it is the default.
+        context.verify_flags |= ssl.VERIFY_X509_STRICT
         with PushGateAdminClient(base_url, "token-1", ssl_context=context) as trusted:
             assert trusted.users() == []
     finally:
