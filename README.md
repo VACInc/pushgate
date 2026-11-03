@@ -52,7 +52,7 @@ See [all server settings](docs/configuration.md), [PAM examples](pam/pushgate.en
 - Firebase requires your own project, phone configuration and short-lived access token; server token refresh is an operator responsibility. No cloud API is required for foreground WebSocket use.
 - CORS and interactive API documentation are disabled by default. Same-origin admin UI works without CORS. Enable exact origins for separate-origin development. `PUSHGATE_API_DOCS_ENABLED=true` exposes the API schema and docs intentionally.
 - Proxy authentication is off by default. Enable it only behind a header-stripping authenticated proxy on a restricted backend network.
-- Built-in rate limits are per-process and bounded; add reverse-proxy connection limits for production. `/healthz` checks liveness, not SQL readiness.
+- Built-in rate limits are per-process and bounded; add reverse-proxy connection limits for production. `/healthz` checks liveness; `/readyz` checks that the database answers.
 
 ## Security fixes in 1.0.1
 
