@@ -257,9 +257,10 @@ class NtfyWakeupProvider(PushProvider):
 
     The PushGate phone app only receives requests over its WebSocket while it is
     in the foreground unless FCM is configured. Until FCM (a Google project and
-    an APK rebuild) exists, this posts one bounded notification per push
-    attempt naming who is logging in where, so the human opens the app and the
-    pending request is replayed to it. It never carries request identifiers,
+    an APK rebuild) exists, this posts one bounded notification per device per
+    push attempt naming who is logging in where, so the human opens the app and
+    the pending request is replayed to it. An approver with two enrolled devices
+    and one retry gets four wake-ups for one login. It never carries request identifiers,
     secrets, or approval capability: approval still happens only in the app.
     Delivery failure is logged by the caller and never blocks authentication.
     """
