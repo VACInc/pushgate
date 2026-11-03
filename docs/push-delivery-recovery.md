@@ -2,7 +2,7 @@
 
 Phone streams use fresh signed timestamp/nonce handshakes. Transient transport failures retry with capped backoff; authorization and protocol failures remain terminal. Closing a stream cancels retries and fences stale callbacks. The UI reports connected only after an authenticated pending snapshot.
 
-Server disconnect handling releases subscribers. Queue overflow forces replay rather than silently dropping approvals. Redis subscription waits for acknowledgement; subscription loss closes the stream so clients reconnect and replay. Replay pages contain at most 100 requests and recheck device authorization. SQL reconciliation every five seconds repairs events missed between server processes.
+Server disconnect handling releases subscribers. Queue overflow forces replay rather than silently dropping approvals. Redis subscription waits for acknowledgement; subscription loss closes the stream so clients reconnect and replay. Replay pages contain at most 100 requests and recheck device authorization. SQL reconciliation every five seconds repairs events missed between server processes. Background push tries every device of the approver: a dead token or a failing provider on one device never skips the others, and the first error is logged once all were tried.
 
 Foreground WebSocket delivery cannot wake a suspended Android app. Configure a trusted UnifiedPush distributor or your own Firebase project for background delivery. The optional notification wakeup is only a prompt to open the app, never an approval capability.
 
