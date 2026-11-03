@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     # Optional private ntfy wake-up (works without FCM): a topic URL such as
     # https://ntfy.example/pushgate, an Authorization header value ("Basic ..."
     # or "Bearer tk_..."), and an ntfy priority name. One notification per
-    # push attempt tells the approver to open the app; it carries no request
-    # id, secret, or approval capability.
+    # enrolled device per push attempt tells the approver to open the app; it
+    # carries no request id, secret, or approval capability.
     ntfy_url: str | None = _setting("NTFY_URL", None)
     ntfy_auth: str | None = _setting("NTFY_AUTH", None)
     ntfy_priority: str = _setting("NTFY_PRIORITY", "high")
