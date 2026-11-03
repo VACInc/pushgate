@@ -362,7 +362,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def enforce_rate_limit(request: Request, call_next):
-        if request.url.path == "/healthz":
+        if request.url.path in ("/healthz", "/readyz"):
             return await call_next(request)
         now_ts = time.time()
         window = max(1, settings.rate_limit_window_seconds)
@@ -1164,6 +1164,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Runs on the event loop, never in the threadpool: worker threads stuck
         # on the database must not make the process look dead.
         return {"ok": True, "service": settings.server_name}
+
+    # Readiness: the database answers. One check at a time, its result reused for
+    # a second after it finishes, so frequent or concurrent probes never load the
+    # database, and a stalled database holds at most one worker thread.
+    app.state.readiness = {"task": None, "finished": None, "timeout": 3.0, "reuse": 1.0}
+
+    def database_answers() -> None:
+        with db_handle.engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+
+    def readiness_finished(task: asyncio.Future) -> None:
+        app.state.readiness["finished"] = time.monotonic()
+        if not task.cancelled():
+            task.exception()  # retrieved here, so a timed-out failure is never "unretrieved"
+
+    @app.get("/readyz")
+    async def readyz():
+        state = app.state.readiness
+        task = state["task"]
+        current = task is not None and (
+            not task.done() or state["finished"] is None or time.monotonic() - state["finished"] < state["reuse"]
+        )
+        if not current:
+            state["finished"] = None
+            task = state["task"] = asyncio.ensure_future(run_in_threadpool(database_answers))
+            task.add_done_callback(readiness_finished)
+        if task.done():
+            ok = not task.cancelled() and task.exception() is None
+        else:
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=state["timeout"])
+                ok = True
+            except Exception:
+                ok = False
+        if ok:
+            return {"ok": True, "service": settings.server_name, "database": "ok"}
+        return JSONResponse(status_code=503, content={"ok": False, "service": settings.server_name, "database": "unavailable"})
 
     @app.get("/api/admin/settings/global")
     def get_global_settings(db: Session = Depends(get_db), auth: dict[str, str] = Depends(require_admin)):
