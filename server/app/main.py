@@ -1767,8 +1767,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             fail_mode=payload.fail_mode,
             enabled=payload.enabled,
         )
+        duplicate = {"code": "duplicate_client_id", "message": "an integration with this client_id already exists"}
+        if payload.client_id is not None and db.scalar(select(Integration.id).where(Integration.client_id == client_id)):
+            raise HTTPException(409, detail=duplicate)
         db.add(integration)
-        db.flush()
+        try:
+            db.flush()
+        except IntegrityError:
+            # A concurrent create took the same client_id between the check and the insert.
+            db.rollback()
+            raise HTTPException(409, detail=duplicate) from None
         if "scope" in auth:
             db.add(ProvisionedIntegration(system_name=integration.system_name,
                                          integration_id=integration.id, api_key_id=auth["key_id"]))
