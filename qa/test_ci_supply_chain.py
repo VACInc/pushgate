@@ -89,3 +89,40 @@ def test_setup_node_does_not_restore_shared_caches(path: Path) -> None:
     for job_name, step in steps(load(path)):
         if str(step.get("uses", "")).startswith("actions/setup-node@"):
             assert step.get("with", {}).get("package-manager-cache") is False, f"{path.name}:{job_name}"
+
+
+def _supply_chain_workflow() -> str:
+    return (ROOT / ".github" / "workflows" / "supply-chain.yml").read_text(encoding="utf-8")
+
+
+def test_every_hashed_python_lock_is_audited() -> None:
+    workflow = _supply_chain_workflow()
+    locks = sorted(
+        str(p.relative_to(ROOT))
+        for p in ROOT.rglob("requirements*.lock")
+        if "node_modules" not in p.parts and ".venv" not in p.parts
+    )
+    assert locks, "expected hashed Python locks"
+    for lock in locks:
+        assert lock in workflow, f"{lock} is not audited by supply-chain.yml"
+        lock_text = (ROOT / lock).read_text(encoding="utf-8")
+        assert "--hash=sha256:" in lock_text, f"{lock} must be fully hashed"
+
+
+def test_supply_chain_workflow_runs_audits_on_schedule() -> None:
+    workflow = yaml.safe_load(_supply_chain_workflow())
+    triggers = workflow.get("on", workflow.get(True))
+    assert "schedule" in triggers
+    jobs = workflow["jobs"]
+    assert {"python-audit", "npm-audit", "android-audit"} <= set(jobs)
+    npm_steps = " ".join(step.get("run", "") for step in jobs["npm-audit"]["steps"])
+    assert "npm ci --ignore-scripts" in npm_steps
+    assert "npm audit --audit-level=low" in npm_steps
+    assert "npm audit signatures" in npm_steps
+
+
+def test_downloaded_scanner_binary_is_checksum_pinned() -> None:
+    env = yaml.safe_load(_supply_chain_workflow())["jobs"]["android-audit"]["env"]
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", env["OSV_SCANNER_VERSION"])
+    assert re.fullmatch(r"[0-9a-f]{64}", env["OSV_SCANNER_SHA256"])
+    assert "sha256sum -c" in _supply_chain_workflow()
