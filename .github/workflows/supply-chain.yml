@@ -1,0 +1,103 @@
+name: Supply chain
+on:
+  push:
+  pull_request:
+  schedule:
+    # Weekly, so advisories published after a merge still surface.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: supply-chain-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  python-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install pip-audit from its hashed lock
+        run: |
+          python -m venv "$RUNNER_TEMP/audit"
+          "$RUNNER_TEMP/audit/bin/pip" install --require-hashes --only-binary=:all: -r requirements-audit.lock
+      - name: Audit every hashed Python lock
+        run: |
+          status=0
+          for lock in requirements.lock requirements-dev.lock requirements-audit.lock pam/requirements.lock; do
+            echo "::group::$lock"
+            "$RUNNER_TEMP/audit/bin/pip-audit" --strict --require-hashes --disable-pip --progress-spinner off -r "$lock" || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+  npm-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: admin-web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Install from lockfile without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Audit all dependencies (including dev toolchain)
+        run: npm audit --audit-level=low
+      - name: Verify registry signatures and provenance attestations
+        run: npm audit signatures
+  android-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      OSV_SCANNER_VERSION: v2.7.0
+      OSV_SCANNER_SHA256: 160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate committed Gradle wrapper JARs
+        uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          min-wrapper-count: 2
+      - name: Install osv-scanner (checksum pinned)
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  $RUNNER_TEMP/osv-scanner" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/osv-scanner"
+      - name: Scan what ships in the APKs (release runtime classpath)
+        # Gradle lockfiles also cover AGP's host-side test tooling, which is
+        # never packaged; scan only the configurations that end up in the app.
+        run: |
+          for app in android-phone android-wear; do
+            mkdir -p "$RUNNER_TEMP/$app"
+            grep -E '^[^#].*[=,]releaseRuntimeClasspath(,|$)' "$app/app/gradle.lockfile" \
+              > "$RUNNER_TEMP/$app/gradle.lockfile"
+            test -s "$RUNNER_TEMP/$app/gradle.lockfile"
+            "$RUNNER_TEMP/osv-scanner" scan source --lockfile "gradle.lockfile:$RUNNER_TEMP/$app/gradle.lockfile"
+          done
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: low
