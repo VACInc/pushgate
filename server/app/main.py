@@ -638,6 +638,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 },
             )
 
+    def require_allowed_push_endpoint(push_token: str | None) -> None:
+        """Every way a push token is stored applies the same UnifiedPush host allowlist."""
+        if not unifiedpush_endpoint_allowed(push_token, settings.unifiedpush_allowed_hosts):
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "push_endpoint_not_allowed", "message": "UnifiedPush endpoint host is not in PUSHGATE_UNIFIEDPUSH_ALLOWED_HOSTS"},
+            )
+
     def scoped_auth(request: Request, db: Session, key: ApiKey) -> dict[str, Any]:
         scope = db.get(ProvisionerScope, key.id)
         if not scope:
@@ -1670,6 +1678,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         assert_write(auth)
         if not db.get(User, payload.user_id):
             raise HTTPException(status_code=404, detail={"code": "user_not_found"})
+        require_allowed_push_endpoint(payload.push_token)
         enrollment_token = None
         data = payload.model_dump()
         if data.get("public_key"):
@@ -1719,6 +1728,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         changes = payload.model_dump(exclude_unset=True)
         if changes.get("key_type") is None and "key_type" in changes:
             raise HTTPException(status_code=422, detail={"code": "bad_key_type", "message": "key_type must be ed25519 or ecdsa_p256"})
+        if "push_token" in changes:
+            require_allowed_push_endpoint(changes["push_token"])
         next_key_type = changes.get("key_type", device.key_type or DEVICE_KEY_TYPE_ED25519)
         if "public_key" in changes:
             public_key = changes["public_key"]
@@ -1806,6 +1817,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not device.enrollment_expires_at or aware(device.enrollment_expires_at) <= utcnow():
             raise HTTPException(status_code=403, detail={"code": "enrollment_token_expired"})
         validate_device_public_key(payload.public_key, payload.key_type)
+        require_allowed_push_endpoint(payload.push_token)
         enrolled_at = utcnow()
         claimed = db.execute(
             update(Device)
@@ -1852,11 +1864,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         message = f"push_token.{device.id}.{payload.timestamp}.{payload.nonce}.{payload.push_token}"
         if not verify_device_message_signature(device.public_key, payload.signature, message, device.key_type):
             raise HTTPException(status_code=403, detail={"code": "bad_device_signature"})
-        if not unifiedpush_endpoint_allowed(payload.push_token, settings.unifiedpush_allowed_hosts):
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "push_endpoint_not_allowed", "message": "UnifiedPush endpoint host is not in PUSHGATE_UNIFIEDPUSH_ALLOWED_HOSTS"},
-            )
+        require_allowed_push_endpoint(payload.push_token)
         prune_replay_nonces(db)
         db.add(DeviceNonce(device_id=device.id, nonce=payload.nonce))
         try:
