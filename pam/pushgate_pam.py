@@ -42,6 +42,7 @@ DEFAULT_CACHE_MAX_AGE = 86400
 OUTAGE_STATUS = frozenset({502, 503, 504})
 _CLOCK_SKEW_SECONDS = 300
 _BACKUP_CODE_TOMBSTONES = "backup_code_tombstones"
+RESPONSE_SIGNATURE_HEADER = "X-PushGate-Response-Signature"
 _SERVER_SNAPSHOT_AT = "server_snapshot_at"
 
 
@@ -58,6 +59,7 @@ class AuthConfig:
         cache_max_age: int = DEFAULT_CACHE_MAX_AGE,
         require_cache_binding: bool = False,
         fail_closed_users: Iterable[str] = (),
+        require_signed_responses: bool = False,
     ) -> None:
         if not client_id or not client_secret:
             raise ValueError("PushGate client ID and secret are required")
@@ -77,6 +79,10 @@ class AuthConfig:
         self.fail_closed_users = frozenset(
             str(name).strip().lower() for name in fail_closed_users if str(name).strip()
         )
+        # Accept only answers the server MACed with this integration's secret.
+        # Needs a server that signs responses; then a TLS-level impersonator can
+        # no longer answer "approved" without the integration secret.
+        self.require_signed_responses = bool(require_signed_responses)
 
 
 def config_from_env() -> AuthConfig:
@@ -108,10 +114,22 @@ def config_from_env() -> AuthConfig:
         # Login names never contain these separators, so reading more of them
         # can only add accounts to the fail-closed list, never drop one.
         fail_closed_users=re.split(r"[\s,;]+", value("PUSHGATE_FAIL_CLOSED_USERS", "") or ""),
+        require_signed_responses=parse_bool_setting(
+            "PUSHGATE_REQUIRE_SIGNED_RESPONSES", value("PUSHGATE_REQUIRE_SIGNED_RESPONSES", "") or ""
+        ),
     )
     if pam_context:
         validate_secure_cache_location(cfg.cache_dir)
     return cfg
+
+
+def parse_bool_setting(name: str, raw: str) -> bool:
+    value = raw.strip().lower()
+    if value in {"", "0", "false", "no", "off"}:
+        return False
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    raise ValueError(f"{name} must be true or false")
 
 
 def validate_secure_config_file(path: str) -> None:
@@ -186,6 +204,27 @@ def _headers(cfg: AuthConfig, method: str, path: str, body: bytes) -> dict[str, 
         "X-PushGate-Signature": integration_signature(cfg.client_secret, method, path, body, timestamp, nonce),
         "Content-Type": "application/json",
     }
+
+
+def response_signature(secret: str, request_nonce: str, status_code: int, body: bytes) -> str:
+    canonical = b"\n".join([b"pushgate-response-v1", request_nonce.encode(), str(int(status_code)).encode(), body])
+    return "v1=" + hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
+
+
+def verify_response(cfg: AuthConfig, request_headers: dict[str, str], response: httpx.Response) -> None:
+    """Raise ValueError unless the response is acceptably authenticated.
+
+    A present signature must always match. A missing one is accepted only when
+    the helper is not configured to require signed responses.
+    """
+    presented = response.headers.get(RESPONSE_SIGNATURE_HEADER)
+    if presented is None:
+        if cfg.require_signed_responses:
+            raise ValueError("PushGate response is not signed")
+        return
+    expected = response_signature(cfg.client_secret, request_headers["X-PushGate-Nonce"], response.status_code, response.content)
+    if not hmac.compare_digest(presented.encode("utf-8", "surrogateescape"), expected.encode()):
+        raise ValueError("PushGate response signature mismatch")
 
 
 def hash_value(value: str) -> str:
@@ -554,8 +593,10 @@ def preflight(username: str, cfg: AuthConfig | None = None, system_name: str | N
     }
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     with httpx.Client(base_url=cfg.server, timeout=5.0, trust_env=False) as client:
-        response = client.post(path, content=body, headers=_headers(cfg, "POST", path, body))
+        headers = _headers(cfg, "POST", path, body)
+        response = client.post(path, content=body, headers=headers)
         response.raise_for_status()
+        verify_response(cfg, headers, response)
         return response.json()["data"]
 
 
@@ -590,15 +631,17 @@ def _consume_approved_request(
         return False
     path = f"/api/v1/auth/requests/{request_id}/consume"
     try:
+        headers = _headers(cfg, "POST", path, b"")
         response = client.post(
             path,
             content=b"",
-            headers=_headers(cfg, "POST", path, b""),
+            headers=headers,
             timeout=min(5.0, remaining),
         )
         if time.monotonic() >= deadline:
             return False
         response.raise_for_status()
+        verify_response(cfg, headers, response)
         payload = response.json()
         if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
             return False
@@ -714,15 +757,17 @@ def authenticate(
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return 1
+            start_headers = _headers(cfg, "POST", path, body)
             start = client.post(
                 path,
                 content=body,
-                headers=_headers(cfg, "POST", path, body),
+                headers=start_headers,
                 timeout=min(5.0, remaining),
             )
             if time.monotonic() >= deadline:
                 return 1
             start.raise_for_status()
+            verify_response(cfg, start_headers, start)
             data = _auth_response_data(start, username)
             request_id = data["id"]
             server_cache = dict(data["cache"])
@@ -756,14 +801,16 @@ def authenticate(
                     # Stop asking; the request expires on the server unused.
                     return 1
                 poll_path = f"{path}/{request_id}"
+                poll_headers = _headers(cfg, "GET", poll_path, b"")
                 poll = client.get(
                     poll_path,
-                    headers=_headers(cfg, "GET", poll_path, b""),
+                    headers=poll_headers,
                     timeout=min(5.0, remaining),
                 )
                 if time.monotonic() >= deadline:
                     return 1
                 poll.raise_for_status()
+                verify_response(cfg, poll_headers, poll)
                 data = _auth_response_data(poll, username, request_id)
                 server_cache = dict(data["cache"])
                 server_cache["binding"] = expected_binding

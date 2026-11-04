@@ -53,6 +53,20 @@ def integration_signature(secret: str, method: str, path: str, body: bytes, time
     return hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
 
 
+RESPONSE_SIGNATURE_HEADER = "X-PushGate-Response-Signature"
+
+
+def integration_response_signature(secret: str, request_nonce: str, status_code: int, body: bytes) -> str:
+    """MAC over a response to a signed integration request.
+
+    Bound to the request's own nonce, so a captured response can never answer a
+    different request, and keyed by the integration secret, so only the server
+    (not a TLS-level impersonator) can say a login was approved.
+    """
+    canonical = b"\n".join([b"pushgate-response-v1", request_nonce.encode(), str(int(status_code)).encode(), body])
+    return "v1=" + hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
+
+
 def decision_signature(secret: str, request_id: str, decision: str) -> str:
     return hmac.new(secret.encode(), f"{request_id}.{decision}".encode(), hashlib.sha256).hexdigest()
 

@@ -14,7 +14,7 @@ from typing import Any, ClassVar
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, func, or_, select, text, update
@@ -34,9 +34,11 @@ from .push import FanoutDisconnected, build_push_fanout, build_push_provider, un
 from .security import (
     DEVICE_KEY_TYPE_ED25519,
     DEVICE_KEY_TYPE_ECDSA_P256,
+    RESPONSE_SIGNATURE_HEADER,
     constant_eq,
     generate_backup_codes,
     hash_value,
+    integration_response_signature,
     integration_signature,
     is_valid_device_public_key,
     matching_totp_counter,
@@ -438,6 +440,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for name, value in headers.items():
             response.headers.setdefault(name, value)
         return response
+
+    @app.middleware("http")
+    async def sign_integration_responses(request: Request, call_next):
+        # A response to an HMAC-authenticated integration request carries a MAC
+        # with that integration's secret, bound to the request nonce, so the PAM
+        # helper can tell the server's answer from a TLS-level impersonator's.
+        response = await call_next(request)
+        signing = getattr(request.state, "pushgate_response_signing", None)
+        if signing is None:
+            return response
+        secret, nonce = signing
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        signed = Response(content=body, status_code=response.status_code, headers=dict(response.headers))
+        signed.headers[RESPONSE_SIGNATURE_HEADER] = integration_response_signature(secret, nonce, response.status_code, body)
+        return signed
 
     # Added last, so it runs first: an oversized body is refused before rate
     # accounting, authentication or any route reads it.
@@ -1227,6 +1244,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expected = integration_signature(integration.secret, request.method, request.url.path, body, timestamp, nonce)
         if not constant_eq(expected, signature):
             raise HTTPException(status_code=403, detail={"code": "bad_signature", "message": "signature mismatch"})
+        # From here on the caller is authenticated: sign whatever we answer,
+        # including a replay rejection and any later refusal.
+        request.state.pushgate_response_signing = (integration.secret, nonce)
         prune_replay_nonces(db)
         db.add(Nonce(integration_id=integration.id, nonce=nonce))
         try:
