@@ -5,9 +5,11 @@ Small React console for the Admin API.
 ## Run
 
 ```sh
-npm install
+npm ci --ignore-scripts
 npm run dev
 ```
+
+`npm ci` installs exactly what `package-lock.json` pins and fails if it is out of date; `npm install` may resolve newer versions and rewrite the lock. Change dependencies deliberately with `npm install <pkg>@<version>` and commit the lock diff.
 
 Set the API URL and bearer token in the top bar. Configure a strong `PUSHGATE_BOOTSTRAP_TOKEN` on the server first; there is no usable default, and common placeholder values are rejected.
 

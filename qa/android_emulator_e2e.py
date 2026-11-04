@@ -44,7 +44,8 @@ def load_runtime_dependencies() -> None:
         from server.app.security import integration_signature as integration_signature_func
     except ModuleNotFoundError as exc:
         raise E2EFailure(
-            "missing Python runtime dependency; run `python -m pip install -e '.[test]'` "
+            "missing Python runtime dependency; run `python -m pip install --require-hashes "
+            "-r requirements.lock -r requirements-dev.lock` "
             "from the repo root before the Android E2E smoke"
         ) from exc
 
