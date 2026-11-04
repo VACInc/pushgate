@@ -47,6 +47,15 @@ internal fun decisionActionNeedsActivity(action: String, requireBiometric: Boole
     action == AuthNotificationDispatcher.ACTION_APPROVE && requireBiometric
 
 /**
+ * A phone notification action that Android must only fire on an unlocked device. A promptless
+ * Approve is a broadcast, and SystemUI sends broadcast actions straight from the lock screen, so
+ * without this anyone holding a locked phone could approve a sign-in. Deny stays available while
+ * locked: refusing access is always safe. The bridged watch copy keeps its own unflagged action.
+ */
+internal fun phoneActionRequiresUnlock(action: String): Boolean =
+    action == AuthNotificationDispatcher.ACTION_APPROVE
+
+/**
  * UPDATE_CURRENT, not CANCEL_CURRENT: a repost for the same request must keep the action
  * tokens the bridged watch notification already holds, or a watch tap fires a cancelled
  * PendingIntent ("Couldn't approve action").
@@ -111,6 +120,7 @@ internal class AuthNotificationDispatcher(private val context: Context) {
         // Built once per post; the phone actions and the watch extender share these tokens.
         val deny = action(ACTION_DENY, "Deny", challenge, binding)
         val approve = action(ACTION_APPROVE, "Approve", challenge, binding)
+        val phoneApprove = action(ACTION_APPROVE, "Approve", challenge, binding, onPhone = true)
         val notification = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(notificationTitle(challenge) + if (failureNote == null) "" else ": approve failed")
@@ -125,7 +135,7 @@ internal class AuthNotificationDispatcher(private val context: Context) {
             .setTimeoutAfter(remainingLifetimeMillis)
             .setContentIntent(openAppIntent(challenge, binding))
             .addAction(deny)
-            .addAction(approve)
+            .addAction(phoneApprove)
             // Bridged watch: Approve on top, Deny below (phone keeps Deny left, Approve right).
             .extend(Notification.WearableExtender().addAction(approve).addAction(deny))
             .build()
@@ -181,7 +191,8 @@ internal class AuthNotificationDispatcher(private val context: Context) {
         action: String,
         title: String,
         challenge: AuthChallenge,
-        binding: NotificationEnrollmentBinding
+        binding: NotificationEnrollmentBinding,
+        onPhone: Boolean = false
     ): Notification.Action {
         val pendingIntent = if (decisionActionNeedsActivity(action, challenge.requireBiometric)) {
             PendingIntent.getActivity(context, 0, decisionIntent(NotificationDecisionActivity::class.java, action, challenge, binding), pendingFlags())
@@ -189,7 +200,13 @@ internal class AuthNotificationDispatcher(private val context: Context) {
             PendingIntent.getBroadcast(context, 0, decisionIntent(DecisionActionReceiver::class.java, action, challenge, binding), pendingFlags())
         }
         val icon = if (action == ACTION_APPROVE) android.R.drawable.ic_input_add else android.R.drawable.ic_menu_close_clear_cancel
-        return Notification.Action.Builder(Icon.createWithResource(context, icon), title, pendingIntent).build()
+        return Notification.Action.Builder(Icon.createWithResource(context, icon), title, pendingIntent)
+            .apply {
+                if (onPhone && phoneActionRequiresUnlock(action) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setAuthenticationRequired(true)
+                }
+            }
+            .build()
     }
 
     /** A tap on the notification body opens the app on this request; the action buttons never do. */
