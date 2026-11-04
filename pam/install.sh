@@ -23,9 +23,14 @@ APPROVER_USERNAME=${PUSHGATE_APPROVER_USERNAME:-}
 SYSTEM_NAME=${PUSHGATE_SYSTEM_NAME:-}
 TIMEOUT=${PUSHGATE_TIMEOUT:-70}
 CACHE_MAX_AGE=${PUSHGATE_CACHE_MAX_AGE:-86400}
+# Accounts that never pass on an outage. Unless given (option or environment,
+# even empty), an existing config's list is kept: a reinstall must never
+# silently drop it.
+FAIL_CLOSED_USERS=${PUSHGATE_FAIL_CLOSED_USERS-}
+FAIL_CLOSED_USERS_GIVEN=${PUSHGATE_FAIL_CLOSED_USERS+1}
 
 usage() {
-  echo "usage: $0 --server URL --client-id ID --client-secret-file FILE [--approver-username USER] [--system-name NAME] [--timeout SECONDS] [--cache-max-age SECONDS] [--dry-run]" >&2
+  echo "usage: $0 --server URL --client-id ID --client-secret-file FILE [--approver-username USER] [--system-name NAME] [--timeout SECONDS] [--cache-max-age SECONDS] [--fail-closed-users 'USER,...'] [--dry-run]" >&2
   echo "       $0 --server URL --client-id ID --client-secret SECRET ...  (deprecated compatibility form)" >&2
 }
 
@@ -39,6 +44,7 @@ while [ "$#" -gt 0 ]; do
     --system-name) SYSTEM_NAME=$2; shift 2 ;;
     --timeout) TIMEOUT=$2; shift 2 ;;
     --cache-max-age) CACHE_MAX_AGE=$2; shift 2 ;;
+    --fail-closed-users) FAIL_CLOSED_USERS=$2; FAIL_CLOSED_USERS_GIVEN=1; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage; exit 2 ;;
@@ -96,6 +102,30 @@ os.write(sys.stdout.fileno(), data)
 PY
 }
 
+read_existing_fail_closed_users() {
+  python3 -I - "$1" "$VALIDATION_SRC" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("pushgate_config_validation", sys.argv[2])
+validation = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(validation)
+value = ""
+# Same reading rules as the helper: byte order mark, "export " prefix, last wins.
+for raw_line in Path(sys.argv[1]).read_text(encoding="utf-8-sig").splitlines():
+    line = raw_line.strip()
+    if line.startswith("export") and line[6:7].isspace():
+        line = line[6:].lstrip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    key, raw_value = line.split("=", 1)
+    if key.strip() == "PUSHGATE_FAIL_CLOSED_USERS":
+        value = validation.decode_env_value(raw_value)
+sys.stdout.write(value)
+PY
+}
+
 validate_config_value() {
   label=$1
   value=$2
@@ -145,6 +175,14 @@ validate_config_value "libexec directory" "$LIBEXEC_DIR"
 validate_config_value "timeout" "$TIMEOUT"
 validate_config_value "cache maximum age" "$CACHE_MAX_AGE"
 
+if [ -z "$FAIL_CLOSED_USERS_GIVEN" ] && [ -e "$CONFIG_DIR/pushgate.env" ]; then
+  if ! FAIL_CLOSED_USERS=$(read_existing_fail_closed_users "$CONFIG_DIR/pushgate.env" 2>/dev/null); then
+    echo "cannot read PUSHGATE_FAIL_CLOSED_USERS from $CONFIG_DIR/pushgate.env; pass --fail-closed-users to set it explicitly" >&2
+    exit 2
+  fi
+fi
+validate_config_value "fail-closed users" "$FAIL_CLOSED_USERS"
+
 case "$TIMEOUT" in *[!0-9]*|'') echo "timeout must be an integer" >&2; exit 2 ;; esac
 case "$CACHE_MAX_AGE" in *[!0-9]*|'') echo "cache maximum age must be an integer" >&2; exit 2 ;; esac
 if [ "$DRY_RUN" = 1 ]; then
@@ -189,6 +227,7 @@ run install -m 0644 "$VALIDATION_SRC" "$VENV_DIR/config_validation.py"
 
 if [ "$DRY_RUN" = 1 ]; then
   echo "DRY-RUN: write $CONFIG_DIR/pushgate.env"
+  echo "DRY-RUN: fail-closed users: ${FAIL_CLOSED_USERS:-(none)}"
 else
   umask 077
   SERVER_CONFIG=$(printf '%s' "$SERVER" | python3 -I -c 'import json, sys; print(json.dumps(sys.stdin.read()))')
@@ -197,6 +236,7 @@ else
   APPROVER_USERNAME_CONFIG=$(printf '%s' "$APPROVER_USERNAME" | python3 -I -c 'import json, sys; print(json.dumps(sys.stdin.read()))')
   SYSTEM_NAME_CONFIG=$(printf '%s' "$SYSTEM_NAME" | python3 -I -c 'import json, sys; print(json.dumps(sys.stdin.read()))')
   CACHE_DIR_CONFIG=$(printf '%s' "$CACHE_DIR" | python3 -I -c 'import json, sys; print(json.dumps(sys.stdin.read()))')
+  FAIL_CLOSED_USERS_CONFIG=$(printf '%s' "$FAIL_CLOSED_USERS" | python3 -I -c 'import json, sys; print(json.dumps(sys.stdin.read()))')
   cat > "$CONFIG_DIR/pushgate.env" <<EOF
 PUSHGATE_SERVER=$SERVER_CONFIG
 PUSHGATE_CLIENT_ID=$CLIENT_ID_CONFIG
@@ -206,6 +246,7 @@ PUSHGATE_SYSTEM_NAME=$SYSTEM_NAME_CONFIG
 PUSHGATE_CACHE_DIR=$CACHE_DIR_CONFIG
 PUSHGATE_TIMEOUT=$TIMEOUT
 PUSHGATE_CACHE_MAX_AGE=$CACHE_MAX_AGE
+PUSHGATE_FAIL_CLOSED_USERS=$FAIL_CLOSED_USERS_CONFIG
 EOF
   chmod 600 "$CONFIG_DIR/pushgate.env"
 fi
