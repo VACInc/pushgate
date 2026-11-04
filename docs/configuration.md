@@ -14,6 +14,8 @@ Environment variables take precedence over `.env`. Use `PUSHGATE_` setting names
 | `PUSHGATE_REQUIRE_BIOMETRIC` | `False` |  |
 | `PUSHGATE_TRUSTED_SESSION_WINDOW_SECONDS` | `0` | ge=0, le=2592000 |
 | `PUSHGATE_ENROLLMENT_TOKEN_TTL_SECONDS` | `600` | ge=1, le=86400 |
+| `PUSHGATE_OFFLINE_CODE_MAX_FAILURES` | `10` | ge=1, le=1000 |
+| `PUSHGATE_OFFLINE_CODE_FAILURE_WINDOW_SECONDS` | `900` | ge=60, le=86400 |
 | `PUSHGATE_SERVER_NAME` | `pushgate` |  |
 | `PUSHGATE_SYSLOG_ENABLED` | `False` |  |
 | `PUSHGATE_SYSLOG_HOST` | `127.0.0.1` |  |
@@ -43,6 +45,8 @@ Environment variables take precedence over `.env`. Use `PUSHGATE_` setting names
 | `PUSHGATE_API_DOCS_ENABLED` | `False` |  |
 | `PUSHGATE_CORS_ALLOW_ORIGINS` | `` |  |
 | `PUSHGATE_CORS_ALLOW_ORIGIN_REGEX` | `None` |  |
+
+After `PUSHGATE_OFFLINE_CODE_MAX_FAILURES` wrong TOTP or backup codes for one principal within the window, the server refuses further offline codes for that principal unchecked (`factor` `offline_code_throttled`) until older failures age out. Push approval is unaffected.
 
 Use a private owner-only directory for SQLite. Database URLs and notification credentials are secrets. Protect `.env` with mode 0600; do not commit it. For PostgreSQL, zero disables a timeout and explicit URL `options` overrides the defaults.
 
