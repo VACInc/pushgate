@@ -1,15 +1,21 @@
 name: CI
 on: [push, pull_request]
-permissions:
-  contents: read
+# Deny everything by default; each job opts back in to the read-only scopes it needs.
+permissions: {}
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   python:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - run: pip install --require-hashes -r requirements.lock -r requirements-dev.lock
@@ -18,34 +24,42 @@ jobs:
         run: sudo env PATH="$PATH" unshare --net -- bash -c 'ip link set lo up; exec "$@"' bash python -m pytest -q qa pam sdk
   web:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: admin-web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
+          # Never restore a shared npm cache into a build; npm ci verifies lockfile integrity hashes.
+          package-manager-cache: false
       - run: npm ci
       - name: Test without external network
         run: sudo env PATH="$PATH" unshare --net -- bash -c 'ip link set lo up; exec "$@"' bash runuser -u "$(id -un)" -- npm test
       - run: npm run build
   android:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
     strategy:
       matrix:
         app: [android-phone, android-wear]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
@@ -57,8 +71,11 @@ jobs:
         working-directory: ${{ matrix.app }}
   image:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: docker build -f server/Dockerfile -t pushgate-ci:1.0.2 .
