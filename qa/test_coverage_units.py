@@ -392,9 +392,12 @@ def test_sqlite_parent_directory_checks(tmp_path: Path, monkeypatch) -> None:
             self.st_uid = st.st_uid + 1
             self.st_mode = st.st_mode
 
-    monkeypatch.setattr("server.app.db.os.fstat", lambda fd: Foreign(real_fstat(fd)))
-    with pytest.raises(RuntimeError, match="owned by the service user"):
-        Database(f"sqlite:///{tmp_path / 'y.db'}")
+    # Scoped: server.app.db.os is the os module itself, so an unscoped patch
+    # would also reach pytest's own temporary-directory cleanup.
+    with monkeypatch.context() as patch:
+        patch.setattr("server.app.db.os.fstat", lambda fd: Foreign(real_fstat(fd)))
+        with pytest.raises(RuntimeError, match="owned by the service user"):
+            Database(f"sqlite:///{tmp_path / 'y.db'}")
 
 
 def test_sqlite_database_path_must_be_a_regular_file(tmp_path: Path) -> None:
