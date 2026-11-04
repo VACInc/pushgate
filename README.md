@@ -41,6 +41,8 @@ sudo sh pam/install.sh --server https://mfa.example.com \
   --client-id YOUR_INTEGRATION_ID --client-secret-file /root/pushgate-integration-secret
 ```
 
+Add `--fail-closed-users 'svc,backup'` for accounts that must never pass on an outage. Re-running the installer keeps the existing list unless this option is given; `--fail-closed-users ''` clears it.
+
 Inspect the example PAM stacks in `deploy/pam.d` before integrating `pam_exec.so`. Preserve the primary SSH factor and test both approve and deny from a separate session while a recovery console stays open. The installer does not choose your SSH authentication policy. An integration secret alone does not prove the user's primary factor.
 
 ## Configuration
