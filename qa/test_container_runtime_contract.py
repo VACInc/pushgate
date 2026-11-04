@@ -60,3 +60,16 @@ def test_container_database_environment_supports_sqlite_and_postgres(monkeypatch
     )
 
     assert Settings().database_url.startswith("postgresql+psycopg://")
+
+
+def test_dependency_installs_never_run_package_lifecycle_scripts():
+    # npm lifecycle scripts and sdist builds are arbitrary code from the registry.
+    dockerfile = (ROOT / "server" / "Dockerfile").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    for text in (dockerfile, workflow):
+        for line in text.splitlines():
+            if line.strip().startswith("#"):
+                continue
+            if "npm ci" in line or "npm install" in line:
+                assert "--ignore-scripts" in line, line
+    assert "pip install --require-hashes --only-binary=:all:" in dockerfile

@@ -39,7 +39,7 @@ jobs:
           node-version: '22'
           # Never restore a shared npm cache into a build; npm ci verifies lockfile integrity hashes.
           package-manager-cache: false
-      - run: npm ci
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Test without external network
         run: sudo env PATH="$PATH" unshare --net -- bash -c 'ip link set lo up; exec "$@"' bash runuser -u "$(id -un)" -- npm test
       - run: npm run build
