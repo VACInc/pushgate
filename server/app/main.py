@@ -2864,10 +2864,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     })
             return True, events, now_pending
 
-    def ws_device_current(device_id: str, authenticated_public_key: str) -> bool:
+    def ws_materialize(
+        device_id: str,
+        authenticated_public_key: str,
+        event: Any,
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Rebuild a fan-out event from SQL before it reaches the phone.
+
+        The fan-out (in-process or Redis Pub/Sub) is only a wake-up signal: a
+        writer to Redis must not be able to put its own approval text, request
+        ids or decisions on an approver's screen. Every event is re-read from the
+        authoritative database and re-checked against this device's user.
+        Returns (device still valid, event to send or None to drop).
+        """
         with db_handle.SessionLocal() as db:
-            current = db.get(Device, device_id)
-            return bool(current and not current.revoked and current.public_key == authenticated_public_key)
+            device = db.get(Device, device_id)
+            if not device or device.revoked or device.public_key != authenticated_public_key:
+                return False, None
+            if not isinstance(event, dict):
+                return True, None
+            kind = event.get("type")
+            if kind == "device_security_changed":
+                return True, {"type": kind, "data": {"id": device.id}}
+            data = event.get("data")
+            request_id = data.get("id") if isinstance(data, dict) else None
+            if kind not in {"auth_request", "auth_decided"} or not isinstance(request_id, str):
+                return True, None
+            row = db.get(AuthRequest, request_id)
+            if not row or (row.approver_user_id or row.user_id) != device.user_id:
+                return True, None
+            if row.status == "pending":
+                if kind != "auth_request" or aware(row.expires_at) <= utcnow():
+                    return True, None
+                return True, auth_event(row, device, db)
+            return True, {
+                "type": "auth_decided",
+                "data": {
+                    "id": row.id,
+                    "status": row.status,
+                    "decided_at": utc_iso(row.decided_at) if row.decided_at else None,
+                },
+            }
 
     @app.websocket("/api/v1/devices/{device_id}/ws")
     async def device_ws(websocket: WebSocket, device_id: str):
@@ -2928,15 +2965,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         if isinstance(event, FanoutDisconnected):
                             await websocket.close(code=1013)
                             return
-                        if not await run_in_threadpool(ws_device_current, device_id, authenticated_public_key):
+                        valid, event = await run_in_threadpool(ws_materialize, device_id, authenticated_public_key, event)
+                        if not valid:
                             await websocket.close(code=1008)
                             return
-                        await websocket.send_json(event)
-                        event_id = (event.get("data") or {}).get("id") if isinstance(event, dict) else None
-                        if event_id and event.get("type") == "auth_request":
-                            known_pending.add(event_id)
-                        elif event_id and event.get("type") == "auth_decided":
-                            known_pending.discard(event_id)
+                        if event is not None:
+                            await websocket.send_json(event)
+                            event_id = (event.get("data") or {}).get("id")
+                            if event_id and event.get("type") == "auth_request":
+                                known_pending.add(event_id)
+                            elif event_id and event.get("type") == "auth_decided":
+                                known_pending.discard(event_id)
                     if time.monotonic() >= next_reconcile:
                         next_reconcile = time.monotonic() + reconcile_every
                         try:
