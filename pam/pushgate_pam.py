@@ -8,13 +8,14 @@ import hmac
 import importlib.util
 import json
 import os
+import re
 import stat
 import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 import httpx
 import pyotp
@@ -56,6 +57,7 @@ class AuthConfig:
         system_name: str | None = None,
         cache_max_age: int = DEFAULT_CACHE_MAX_AGE,
         require_cache_binding: bool = False,
+        fail_closed_users: Iterable[str] = (),
     ) -> None:
         if not client_id or not client_secret:
             raise ValueError("PushGate client ID and secret are required")
@@ -70,6 +72,11 @@ class AuthConfig:
         self.system_name = system_name
         self.cache_max_age = cache_max_age
         self.require_cache_binding = require_cache_binding
+        # Accounts that never pass on an outage: no cached fail-open mode and no
+        # offline code, only a live approval (for example service accounts).
+        self.fail_closed_users = frozenset(
+            str(name).strip().lower() for name in fail_closed_users if str(name).strip()
+        )
 
 
 def config_from_env() -> AuthConfig:
@@ -98,6 +105,7 @@ def config_from_env() -> AuthConfig:
         system_name=value("PUSHGATE_SYSTEM_NAME"),
         cache_max_age=int(value("PUSHGATE_CACHE_MAX_AGE", str(DEFAULT_CACHE_MAX_AGE)) or str(DEFAULT_CACHE_MAX_AGE)),
         require_cache_binding=pam_context,
+        fail_closed_users=re.split(r"[\s,]+", value("PUSHGATE_FAIL_CLOSED_USERS", "") or ""),
     )
     if pam_context:
         validate_secure_cache_location(cfg.cache_dir)
@@ -596,6 +604,11 @@ def _consume_approved_request(
         return False
 
 
+def always_fail_closed(cfg: AuthConfig, username: str | None) -> bool:
+    """True for an account listed in PUSHGATE_FAIL_CLOSED_USERS."""
+    return str(username or "").strip().lower() in cfg.fail_closed_users
+
+
 def _outage_decision(
     cfg: AuthConfig,
     username: str,
@@ -603,6 +616,8 @@ def _outage_decision(
     offline_code: str | None,
     expected_binding: dict[str, str],
 ) -> int:
+    if always_fail_closed(cfg, username):
+        return 1
     try:
         local_cache = read_cache(cfg.cache_dir, username) or local_cache
     except (OSError, ValueError):
@@ -629,6 +644,8 @@ def authenticate(
     cfg: AuthConfig | None = None,
 ) -> int:
     cfg = cfg or config_from_env()
+    if always_fail_closed(cfg, username):
+        offline_code = None
     system_name = cfg.system_name or system_name or os.uname().nodename
     expected_binding = cache_binding(cfg, username, system_name)
     local_cache = read_cache(cfg.cache_dir, username)
@@ -750,8 +767,9 @@ def main(argv: list[str] | None = None) -> int:
     if not args.user:
         print("missing PAM user", file=sys.stderr)
         return 1
-    offline_code = args.offline_code
     cfg = config_from_env()
+    fail_closed = always_fail_closed(cfg, args.user)
+    offline_code = None if fail_closed else args.offline_code
     if args.preflight:
         try:
             print(json.dumps(preflight(args.user, cfg=cfg), sort_keys=True))
@@ -759,7 +777,7 @@ def main(argv: list[str] | None = None) -> int:
         except (httpx.HTTPError, KeyError, OSError, ValueError) as exc:
             print(f"PushGate preflight failed: {exc.__class__.__name__}", file=sys.stderr)
             return 2
-    stdin_code = stdin_offline_code() if not offline_code else None
+    stdin_code = stdin_offline_code() if not offline_code and not fail_closed else None
     if stdin_code:
         try:
             local_cache = read_cache(cfg.cache_dir, args.user)

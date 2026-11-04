@@ -1055,3 +1055,77 @@ def test_installer_rejects_config_line_injection(tmp_path):
     assert "must not contain control characters" in result.stderr
     assert "super-secret-value" not in result.stdout
     assert "super-secret-value" not in result.stderr
+
+
+def _fail_open_setup(tmp_path, *users, fail_closed=("svc",)):
+    cfg = pushgate_pam.AuthConfig(
+        "https://pushgate.example", "id", "secret", str(tmp_path), timeout=1,
+        system_name="labbox", require_cache_binding=True, fail_closed_users=fail_closed,
+    )
+    for user in users:
+        binding = pushgate_pam.cache_binding(cfg, user, "labbox")
+        pushgate_pam.write_cache(tmp_path, user, _cache(user, fail_mode="open", binding=binding))
+    return cfg
+
+
+def _refuse(request):
+    raise httpx.ConnectError("outage", request=request)
+
+
+@pytest.mark.parametrize("outage", [lambda _r: httpx.Response(502), lambda _r: httpx.Response(503),
+                                    lambda _r: httpx.Response(504), _refuse], ids=["502", "503", "504", "connect"])
+@pytest.mark.parametrize("user", ["svc", "SVC", " svc "])
+def test_fail_closed_user_never_uses_fail_open_cache(tmp_path, monkeypatch, outage, user):
+    cfg = _fail_open_setup(tmp_path, user)
+    _mock_client(monkeypatch, outage)
+    assert pushgate_pam.authenticate(user, cfg=cfg) == 1
+
+
+@pytest.mark.parametrize("outage", [lambda _r: httpx.Response(503), _refuse], ids=["503", "connect"])
+def test_other_users_keep_fail_open_outage_behavior(tmp_path, monkeypatch, outage):
+    cfg = _fail_open_setup(tmp_path, "alice")
+    _mock_client(monkeypatch, outage)
+    assert pushgate_pam.authenticate("alice", cfg=cfg) == 0
+
+
+def test_fail_closed_user_offline_code_is_not_sent_or_spent(tmp_path, monkeypatch):
+    code = "12345678"
+    cfg = _fail_open_setup(tmp_path, fail_closed=("svc",))
+    binding = pushgate_pam.cache_binding(cfg, "svc", "labbox")
+    pushgate_pam.write_cache(tmp_path, "svc", _cache("svc", binding=binding,
+                                                      backup_code_hashes=[pushgate_pam.hash_value(code)]))
+    bodies = []
+
+    def outage(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(503)
+
+    _mock_client(monkeypatch, outage)
+    assert pushgate_pam.authenticate("svc", offline_code=code, cfg=cfg) == 1
+    assert bodies and all(body["offline_code"] is None for body in bodies)
+    assert pushgate_pam.read_cache(tmp_path, "svc")["backup_code_hashes"] == [pushgate_pam.hash_value(code)]
+
+
+def test_fail_closed_users_config_and_main(tmp_path, monkeypatch):
+    config = tmp_path / "pushgate.env"
+    config.write_text("PUSHGATE_SERVER=https://pushgate.example\nPUSHGATE_CLIENT_ID=id\n"
+                      "PUSHGATE_CLIENT_SECRET=secret\nPUSHGATE_FAIL_CLOSED_USERS=svc, Ops backup\n")
+    monkeypatch.delenv("PAM_TYPE", raising=False)
+    monkeypatch.delenv("PUSHGATE_PAM_LAUNCHER", raising=False)
+    monkeypatch.setenv("PUSHGATE_CONFIG", str(config))
+    cfg = pushgate_pam.config_from_env()
+    assert cfg.fail_closed_users == {"svc", "ops", "backup"}
+    empty = pushgate_pam.AuthConfig("https://pushgate.example", "id", "secret", str(tmp_path))
+    assert empty.fail_closed_users == frozenset()
+
+    monkeypatch.setattr(pushgate_pam, "config_from_env", lambda: cfg)
+    stdin_reads = []
+    monkeypatch.setattr(pushgate_pam, "stdin_offline_code", lambda: stdin_reads.append(1) or None)
+    seen = []
+    monkeypatch.setattr(pushgate_pam, "authenticate",
+                        lambda user, service, source, offline_code=None, cfg=None: seen.append((user, offline_code)) or 1)
+    pushgate_pam.main(["--user", "svc", "--offline-code", "12345678"])
+    pushgate_pam.main(["--user", "alice", "--offline-code", "12345678"])
+    assert seen == [("svc", None), ("alice", "12345678")]
+    pushgate_pam.main(["--user", "svc"])
+    assert stdin_reads == []
