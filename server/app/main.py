@@ -759,13 +759,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         data["require_biometric"] = bool(device.require_biometric or request_requires_biometric(auth_req, db))
         return {"type": "auth_request", "data": data}
 
-    def cache_payload(db: Session, user: User, integration: Integration, fail_mode: str) -> dict[str, Any]:
+    def cache_payload(
+        db: Session, user: User, integration: Integration, fail_mode: str, approver_user: User | None = None
+    ) -> dict[str, Any]:
+        # A locked principal or approver gets no outage access: the helper
+        # stores this snapshot and uses it while the server is unreachable.
+        locked = bool(user.locked or (approver_user is not None and approver_user.locked))
         payload: dict[str, Any] = {
             "username": user.username,
-            "fail_mode": fail_mode,
+            "fail_mode": "closed" if locked else fail_mode,
             "updated_at": utcnow().isoformat(),
         }
-        if integration.principal_username == user.username and not online_only(db, integration):
+        if not locked and integration.principal_username == user.username and not online_only(db, integration):
             codes = db.scalars(select(BackupCode).where(BackupCode.user_id == user.id, BackupCode.used_at.is_(None))).all()
             payload["totp_secret"] = user.totp_secret
             payload["last_totp_counter"] = user.totp_last_used_step
@@ -2278,7 +2283,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "expires_at": utc_iso(duplicate.expires_at),
                         "fail_mode": duplicate.fail_mode_effective,
                         "approver_username": approver_user.username,
-                        "cache": cache_payload(db, user, integration, duplicate.fail_mode_effective),
+                        "cache": cache_payload(db, user, integration, duplicate.fail_mode_effective, approver_user),
                         "duplicate": True,
                     }
                 ), publishes, retry
@@ -2343,7 +2348,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "expires_at": utc_iso(auth_req.expires_at),
                 "fail_mode": fail_mode,
                 "approver_username": approver_user.username,
-                "cache": cache_payload(db, user, integration, fail_mode),
+                "cache": cache_payload(db, user, integration, fail_mode, approver_user),
             }
         ), publishes, retry
 
@@ -2561,6 +2566,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not auth_req or auth_req.integration_id != integration.id:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
         user = db.get(User, auth_req.user_id)
+        approver_user = db.get(User, auth_req.approver_user_id or auth_req.user_id)
         detail = auth_req.detail if isinstance(auth_req.detail, dict) else {}
         return envelope(
             {
@@ -2569,7 +2575,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "allowed": auth_req.status == "approved",
                 "fail_mode": auth_req.fail_mode_effective,
                 "approver_username": detail.get("approver_username") or auth_req.username,
-                "cache": cache_payload(db, user, integration, auth_req.fail_mode_effective),
+                "cache": cache_payload(db, user, integration, auth_req.fail_mode_effective, approver_user),
             }
         )
 
