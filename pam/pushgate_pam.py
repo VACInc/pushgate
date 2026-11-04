@@ -105,7 +105,9 @@ def config_from_env() -> AuthConfig:
         system_name=value("PUSHGATE_SYSTEM_NAME"),
         cache_max_age=int(value("PUSHGATE_CACHE_MAX_AGE", str(DEFAULT_CACHE_MAX_AGE)) or str(DEFAULT_CACHE_MAX_AGE)),
         require_cache_binding=pam_context,
-        fail_closed_users=re.split(r"[\s,]+", value("PUSHGATE_FAIL_CLOSED_USERS", "") or ""),
+        # Login names never contain these separators, so reading more of them
+        # can only add accounts to the fail-closed list, never drop one.
+        fail_closed_users=re.split(r"[\s,;]+", value("PUSHGATE_FAIL_CLOSED_USERS", "") or ""),
     )
     if pam_context:
         validate_secure_cache_location(cfg.cache_dir)
@@ -160,8 +162,13 @@ def read_env_file(path: str) -> dict[str, str]:
     file_path = Path(path)
     if not file_path.exists():
         return env
-    for raw_line in file_path.read_text(encoding="utf-8").splitlines():
+    # utf-8-sig: an editor-added byte order mark must not rename the first key.
+    for raw_line in file_path.read_text(encoding="utf-8-sig").splitlines():
         line = raw_line.strip()
+        # Shell-style "export KEY=value" lines name the same setting; ignoring
+        # them silently dropped settings such as PUSHGATE_FAIL_CLOSED_USERS.
+        if line.startswith("export") and line[6:7].isspace():
+            line = line[6:].lstrip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
