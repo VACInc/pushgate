@@ -251,9 +251,9 @@ def query_dt(value: str | None) -> datetime | None:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         raise HTTPException(status_code=422, detail={"code": "bad_datetime", "message": "datetime must be ISO-8601"}) from None
-    if dt.tzinfo:
-        return dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt
+    # Aware UTC: the columns are timestamptz, and PostgreSQL would read a naive
+    # value in the session time zone. A filter without an offset means UTC.
+    return aware(dt).astimezone(timezone.utc)
 
 
 def csv_list(value: str) -> list[str]:
@@ -869,7 +869,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> AuthRequest | None:
         if online_only(db, integration) or window_seconds <= 0:
             return None
-        cutoff = (utcnow() - timedelta(seconds=window_seconds)).replace(tzinfo=None)
+        cutoff = utcnow() - timedelta(seconds=window_seconds)
         prior = db.scalar(
             select(AuthRequest)
             .outerjoin(Device, Device.id == AuthRequest.approved_by_device_id)
@@ -1044,7 +1044,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return len(expired)
 
     def prune_replay_nonces(db: Session) -> int:
-        cutoff = (utcnow() - timedelta(seconds=2 * max(1, settings.hmac_window_seconds))).replace(tzinfo=None)
+        # Aware, never naive: PostgreSQL reads a naive cutoff in the session
+        # time zone, which west of UTC lands in the future and deletes every
+        # fresh nonce, turning replay protection off.
+        cutoff = utcnow() - timedelta(seconds=2 * max(1, settings.hmac_window_seconds))
         integration_result = db.execute(delete(Nonce).where(Nonce.created_at < cutoff))
         device_result = db.execute(delete(DeviceNonce).where(DeviceNonce.created_at < cutoff))
         return int(integration_result.rowcount or 0) + int(device_result.rowcount or 0)
@@ -1061,7 +1064,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not app.state.source_names.enabled:
             return
         def recent_sources() -> list[str]:
-            cutoff = (utcnow() - timedelta(days=7)).replace(tzinfo=None)
+            cutoff = utcnow() - timedelta(days=7)
             with db_handle.SessionLocal() as db:
                 return list(
                     db.scalars(
