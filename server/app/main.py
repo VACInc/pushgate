@@ -232,6 +232,23 @@ BUILT_IN_ROLES: dict[str, dict[str, Any]] = {
 }
 
 
+# Sent on every HTTP response. The admin console is a same-origin bundle with no
+# inline script or style, so a strict self-only policy fits it; API responses
+# are JSON and unaffected. Framing is refused everywhere (clickjacking).
+BASELINE_SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "
+        "form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+        "connect-src 'self'; font-src 'self'; manifest-src 'self'"
+    ),
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+}
+
+
 def envelope(data: Any, **meta: Any) -> dict[str, Any]:
     out: dict[str, Any] = {"data": data}
     if meta:
@@ -462,6 +479,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def get_db():
         yield from db_handle.session()
+
+    @app.middleware("http")
+    async def baseline_security_headers(request: Request, call_next):
+        # The admin console and API must be safe even when no reverse proxy adds
+        # these. A proxy that sets its own values still wins (setdefault).
+        response = await call_next(request)
+        # Opt-in interactive API docs load their own CDN script and inline setup.
+        docs_page = settings.api_docs_enabled and request.url.path.startswith("/docs")
+        for name, value in BASELINE_SECURITY_HEADERS.items():
+            if docs_page and name == "Content-Security-Policy":
+                continue
+            response.headers.setdefault(name, value)
+        return response
 
     def audit(db: Session, actor: str, action: str, resource_type: str, resource_id: str | None = None, detail: dict | None = None) -> None:
         row = AuditLog(actor=actor, action=action, resource_type=resource_type, resource_id=resource_id, detail=detail or {})
