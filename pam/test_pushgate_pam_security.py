@@ -1129,3 +1129,50 @@ def test_fail_closed_users_config_and_main(tmp_path, monkeypatch):
     assert seen == [("svc", None), ("alice", "12345678")]
     pushgate_pam.main(["--user", "svc"])
     assert stdin_reads == []
+
+
+@pytest.mark.parametrize("line, expected", [("", False), ("PUSHGATE_REQUIRE_SIGNED_RESPONSES=true\n", True),
+                                            ("PUSHGATE_REQUIRE_SIGNED_RESPONSES=false\n", False)])
+def test_require_signed_responses_is_read_from_the_config_file(tmp_path, monkeypatch, line, expected):
+    config = tmp_path / "pushgate.env"
+    config.write_text("PUSHGATE_SERVER=https://pushgate.example\nPUSHGATE_CLIENT_ID=id\n"
+                      "PUSHGATE_CLIENT_SECRET=secret\n" + line)
+    monkeypatch.delenv("PAM_TYPE", raising=False)
+    monkeypatch.delenv("PUSHGATE_PAM_LAUNCHER", raising=False)
+    monkeypatch.setenv("PUSHGATE_CONFIG", str(config))
+    assert pushgate_pam.config_from_env().require_signed_responses is expected
+
+
+def test_required_signature_denies_unsigned_answers_and_any_mismatch_denies(tmp_path, monkeypatch):
+    mode = {"signature": None}
+
+    def handler(request):
+        if request.url.path.endswith("/consume"):
+            response = httpx.Response(200, json=_consume_ack("request-1"))
+        else:
+            response = httpx.Response(201, json={"data": {"id": "request-1", "status": "approved", "allowed": True,
+                                                          "cache": _cache("alice", fail_mode="open")}})
+        if mode["signature"] == "wrong":
+            response.headers[pushgate_pam.RESPONSE_SIGNATURE_HEADER] = "v1=" + "0" * 64
+        elif mode["signature"] == "valid":
+            response.headers[pushgate_pam.RESPONSE_SIGNATURE_HEADER] = pushgate_pam.response_signature(
+                "secret", request.headers["X-PushGate-Nonce"], response.status_code, response.read())
+        return response
+
+    _mock_client(monkeypatch, handler)
+    lax = pushgate_pam.AuthConfig("https://pushgate.example", "id", "secret", str(tmp_path / "lax"), timeout=2)
+    strict = pushgate_pam.AuthConfig("https://pushgate.example", "id", "secret", str(tmp_path / "strict"), timeout=2,
+                                     require_signed_responses=True)
+    # Unsigned answers: accepted only when signatures are not required.
+    assert pushgate_pam.authenticate("alice", cfg=lax) == 0
+    assert pushgate_pam.authenticate("alice", cfg=strict) == 1
+    # A strict helper never stores the unauthenticated cache (it could plant fail-open).
+    assert pushgate_pam.read_cache(tmp_path / "strict", "alice") is None
+    # A present but wrong signature always denies.
+    mode["signature"] = "wrong"
+    assert pushgate_pam.authenticate("alice", cfg=lax) == 1
+    assert pushgate_pam.authenticate("alice", cfg=strict) == 1
+    # Correctly signed answers pass in both modes.
+    mode["signature"] = "valid"
+    assert pushgate_pam.authenticate("alice", cfg=lax) == 0
+    assert pushgate_pam.authenticate("alice", cfg=strict) == 0
