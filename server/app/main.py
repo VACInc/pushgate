@@ -924,7 +924,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     AuthRequest.factor.in_(("totp", "backup_code")),
                     (Device.user_id == approver_user.id)
                     & Device.revoked.is_(False)
-                    & Device.public_key.is_not(None),
+                    & Device.public_key.is_not(None)
+                    # Only approvals signed under the device's current key
+                    # epoch: re-keying or re-admitting a device ends its trust.
+                    & (Device.enrolled_at.is_(None) | (AuthRequest.decided_at >= Device.enrolled_at)),
                 ),
                 AuthRequest.consumed_at.is_not(None),
                 AuthRequest.consumed_at >= cutoff,
@@ -1678,6 +1681,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 device.enrolled_at = None
         elif "key_type" in changes and device.public_key:
             validate_device_public_key(device.public_key, next_key_type)
+        if changes.get("revoked") is False and device.revoked and device.public_key and "public_key" not in changes:
+            # Re-admitting a revoked device starts a new trust epoch: approvals
+            # and trusted sessions from before the revocation stay invalid.
+            device.enrolled_at = utcnow()
         for key, value in changes.items():
             setattr(device, key, value)
         audit(
@@ -2475,6 +2482,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).all()
         }
 
+    def approved_under_current_key(auth_req: AuthRequest, device: Device) -> bool:
+        """True when the device's current key epoch began before this approval was decided.
+
+        ``enrolled_at`` marks when the device's present key became trusted. A
+        grant decided earlier was made by a key (or a device admission) that has
+        since been replaced, so it must not admit a login.
+        """
+        if device.enrolled_at is None:
+            return True
+        if auth_req.decided_at is None:
+            return False
+        return aware(auth_req.decided_at) >= aware(device.enrolled_at)
+
     def approval_revoked(db: Session, auth_req: AuthRequest, users: dict[str, User]) -> str | None:
         """Why a granted approval may no longer be used, or None."""
         approver_user_id = auth_req.approver_user_id or auth_req.user_id
@@ -2493,6 +2513,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             if not device or device.revoked or not device.public_key or device.user_id != approver_user_id:
                 return "device_revoked"
+            if not approved_under_current_key(auth_req, device):
+                # Signed by a key the device no longer holds (re-keyed,
+                # rotated and re-enrolled, or re-admitted after revocation).
+                return "device_rekeyed"
         return None
 
     def consume_approved_request(
