@@ -1463,10 +1463,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def delete_user(user_id: str, db: Session = Depends(get_db), auth: dict[str, str] = Depends(require_admin)):
         assert_write(auth)
         user = db.get(User, user_id)
-        if user:
-            db.delete(user)
-            audit(db, auth["actor"], "user.delete", "user", user_id)
+        if not user:
+            return
+        # Devices and authentication requests are kept for the append-only
+        # logs, so a user who has either can only be locked. Checked explicitly:
+        # SQLite does not enforce foreign keys and would orphan those rows,
+        # PostgreSQL would refuse the delete with an unhandled 500.
+        in_use = {"code": "user_in_use", "message": "user has devices or authentication history; lock the user instead"}
+        if db.scalar(select(Device.id).where(Device.user_id == user_id).limit(1)) or db.scalar(
+            select(AuthRequest.id)
+            .where(or_(AuthRequest.user_id == user_id, AuthRequest.approver_user_id == user_id))
+            .limit(1)
+        ):
+            raise HTTPException(status_code=409, detail=in_use)
+        # Group memberships and backup codes belong to the user and go with it.
+        for row in db.scalars(select(UserGroup).where(UserGroup.user_id == user_id)).all():
+            db.delete(row)
+        for row in db.scalars(select(BackupCode).where(BackupCode.user_id == user_id)).all():
+            db.delete(row)
+        db.flush()
+        db.delete(user)
+        audit(db, auth["actor"], "user.delete", "user", user_id)
+        try:
             db.commit()
+        except IntegrityError:
+            # A device or request for this user was added concurrently.
+            db.rollback()
+            raise HTTPException(status_code=409, detail=in_use) from None
 
     def cancel_unconsumed_for_locked_user(db: Session, user: User, actor: str) -> list[AuthRequest]:
         """Deny every pending or approved-but-unconsumed request the locked user is part of."""
