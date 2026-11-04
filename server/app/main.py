@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, func, or_, select, text, update
-from sqlalchemy.exc import DataError, IntegrityError, OperationalError
+from sqlalchemy.exc import DataError, IntegrityError, InternalError, OperationalError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -648,6 +648,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "code": "database_unavailable", "message": "database temporarily unavailable"}})
         raise exc
 
+    @app.exception_handler(InternalError)
+    async def database_read_only(request: Request, exc: InternalError):
+        code = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+        if code == "25006":
+            # read_only_sql_transaction: a hot standby or demoted leader (a
+            # failover in progress). Like a lost connection, a retryable outage.
+            return JSONResponse(status_code=503, content={"detail": {
+                "code": "database_unavailable", "message": "database temporarily unavailable"}})
+        raise exc
+
     @app.exception_handler(DataError)
     async def database_rejected_value(request: Request, exc: DataError):
         # A value the database refuses (too long, NUL, bad encoding) is a bad
@@ -1236,7 +1246,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def database_answers() -> None:
         with db_handle.engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
+            if conn.dialect.name == "postgresql":
+                # A standby or demoted leader answers reads but refuses the
+                # writes every login makes, so it is not ready.
+                if conn.execute(text("SHOW transaction_read_only")).scalar() != "off":
+                    raise RuntimeError("database is read-only")
+            else:
+                conn.execute(text("SELECT 1"))
 
     def readiness_finished(task: asyncio.Future) -> None:
         app.state.readiness["finished"] = time.monotonic()
