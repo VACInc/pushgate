@@ -85,6 +85,10 @@ class Settings(BaseSettings):
     # name, as a comma list of login:Shown (e.g. "svc:Service"). Logins match case-insensitively;
     # everyone else is shown by login.
     display_users: str = _setting("DISPLAY_USERS", "")
+    # Largest request body any route accepts. Signed routes read the body
+    # before they can check its signature, so this also bounds what an
+    # unauthenticated client can make the server buffer.
+    max_request_body_bytes: int = _setting("MAX_REQUEST_BODY_BYTES", 1048576, ge=1024, le=67108864)
     rate_limit_per_minute: int = _setting("RATE_LIMIT_PER_MINUTE", 600, ge=1, le=100000)
     rate_limit_window_seconds: int = _setting("RATE_LIMIT_WINDOW_SECONDS", 60, ge=1, le=3600)
     static_dir: str | None = _setting("STATIC_DIR", None)

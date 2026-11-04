@@ -22,6 +22,7 @@ from sqlalchemy.exc import DataError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
+from .body_limit import RequestBodyLimit
 from .config import Settings
 from .db import Database
 from .delivery_watch import UnansweredWatch
@@ -421,6 +422,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for name, value in headers.items():
             response.headers.setdefault(name, value)
         return response
+
+    # Added last, so it runs first: an oversized body is refused before rate
+    # accounting, authentication or any route reads it.
+    app.add_middleware(RequestBodyLimit, max_bytes=settings.max_request_body_bytes)
 
     def get_db():
         yield from db_handle.session()

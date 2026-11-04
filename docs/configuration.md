@@ -30,6 +30,7 @@ Environment variables take precedence over `.env`. Use `PUSHGATE_` setting names
 | `PUSHGATE_DB_STATEMENT_TIMEOUT_MS` | `15000` | ge=0, le=600000 |
 | `PUSHGATE_DB_LOCK_TIMEOUT_MS` | `5000` | ge=0, le=600000 |
 | `PUSHGATE_WS_RECONCILE_SECONDS` | `5.0` | ge=0.1, le=300 |
+| `PUSHGATE_MAX_REQUEST_BODY_BYTES` | `1048576` | ge=1024, le=67108864; larger bodies get 413 before any route reads them |
 | `PUSHGATE_RATE_LIMIT_PER_MINUTE` | `600` | ge=1, le=100000 |
 | `PUSHGATE_RATE_LIMIT_WINDOW_SECONDS` | `60` | ge=1, le=3600 |
 | `PUSHGATE_STATIC_DIR` | `None` |  |
