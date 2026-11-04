@@ -248,19 +248,18 @@ class PushGateAdminClient:
         approver_username: str | None = None,
         system_name: str | None = None,
     ) -> dict[str, Any]:
-        payload = {
-            "name": name,
+        payload: dict[str, Any] = {"name": name, "system_type": system_type, "enabled": enabled}
+        # Unset options are left out rather than sent as null: the server's
+        # defaults are the same, and a scoped provisioner key may not send
+        # client_id at all (any extra field is outside its scope).
+        optional = {
             "client_id": client_id,
             "fail_mode": fail_mode,
-            "system_type": system_type,
-            "enabled": enabled,
+            "principal_username": principal_username,
+            "approver_username": approver_username,
+            "system_name": system_name,
         }
-        if principal_username is not None:
-            payload["principal_username"] = principal_username
-        if approver_username is not None:
-            payload["approver_username"] = approver_username
-        if system_name is not None:
-            payload["system_name"] = system_name
+        payload.update({key: value for key, value in optional.items() if value is not None})
         return self._data(self.client.post("/api/admin/integrations", json=payload))
 
     def integrations(self) -> list[dict[str, Any]]:
