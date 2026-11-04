@@ -2595,11 +2595,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         integration = verify_integration_request(request, body, db)
         return consume_approved_request(request_id, integration, db)
 
+    def authenticate_decision(db: Session, request_id: str, payload: DecisionIn) -> None:
+        """Reject a decision that its device did not sign, before any lock is taken.
+
+        This route has no other credential, so an unsigned caller must never
+        hold SQLite's write lock or PostgreSQL row locks that logins wait on.
+        The locked checks in decide() repeat this and stay authoritative.
+        """
+        auth_req = db.get(AuthRequest, request_id)
+        if not auth_req:
+            raise HTTPException(status_code=404, detail={"code": "not_found"})
+        approver_user_id = auth_req.approver_user_id or auth_req.user_id
+        device = db.get(Device, payload.device_id)
+        if not device or device.revoked or device.user_id != approver_user_id:
+            raise HTTPException(status_code=403, detail={"code": "device_rejected"})
+        if not device.public_key:
+            raise HTTPException(status_code=403, detail={"code": "device_not_enrolled"})
+        if not verify_device_signature(device.public_key, payload.signature, request_id, payload.decision, payload.biometric_verified, device.key_type):
+            raise HTTPException(status_code=403, detail={"code": "bad_device_signature"})
+        # End the read so the locked phase starts a fresh transaction.
+        db.rollback()
+
     @app.post("/api/v1/auth/requests/{request_id}/decision")
     def decide(request_id: str, payload: DecisionIn, db: Session = Depends(get_db)):
+        authenticate_decision(db, request_id, payload)
         if db.get_bind().dialect.name == "sqlite":
             db.execute(text("BEGIN IMMEDIATE"))
-        auth_req = db.get(AuthRequest, request_id)
+        auth_req = db.get(AuthRequest, request_id, populate_existing=True)
         if not auth_req:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
         approver_user_id = auth_req.approver_user_id or auth_req.user_id
@@ -2622,7 +2644,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if not auth_req:
             raise HTTPException(status_code=404, detail={"code": "not_found"})
-        device = db.scalar(select(Device).where(Device.id == payload.device_id).with_for_update())
+        device = db.scalar(
+            select(Device)
+            .where(Device.id == payload.device_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         if not device or device.revoked or device.user_id != approver_user_id:
             raise HTTPException(status_code=403, detail={"code": "device_rejected"})
         if not device.public_key:
