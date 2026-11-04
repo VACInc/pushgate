@@ -2224,6 +2224,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             asyncio.create_task(push_with_retries(*retry))
         return result
 
+    OFFLINE_CODE_FAILURE_FACTORS = ("offline_code", "totp_replay")
+
+    def offline_code_throttled(db: Session, user: User) -> bool:
+        """True once the principal has too many recent wrong offline codes."""
+        window_start = utcnow() - timedelta(seconds=settings.offline_code_failure_window_seconds)
+        failures = db.scalar(
+            select(func.count(AuthRequest.id)).where(
+                AuthRequest.user_id == user.id,
+                AuthRequest.factor.in_(OFFLINE_CODE_FAILURE_FACTORS),
+                AuthRequest.created_at >= window_start,
+            )
+        )
+        return int(failures or 0) >= settings.offline_code_max_failures
+
     def create_auth_request_sync(
         integration: Integration,
         payload: dict[str, Any],
@@ -2281,6 +2295,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             factor = "trusted_session"
             # Preserve push provenance so consume rechecks concurrent revocation.
             trusted_device_id = trusted_grant.approved_by_device_id if trusted_grant.factor == "push" else None
+        elif offline_code and offline_code_throttled(db, user):
+            # Too many wrong codes recently: refuse without checking, so the
+            # 6-digit TOTP space cannot be searched online.
+            status = "denied"
+            factor = "offline_code_throttled"
         elif offline_code:
             totp_step = matching_totp_counter(user.totp_secret, str(offline_code)) if user.totp_secret else None
             if totp_step is not None:

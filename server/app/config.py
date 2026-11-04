@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     require_biometric: bool = _setting("REQUIRE_BIOMETRIC", False)
     trusted_session_window_seconds: int = _setting("TRUSTED_SESSION_WINDOW_SECONDS", 0, ge=0, le=2592000)
     enrollment_token_ttl_seconds: int = _setting("ENROLLMENT_TOKEN_TTL_SECONDS", 600, ge=1, le=86400)
+    # Online TOTP/backup-code guessing: after this many wrong offline codes for one
+    # principal within the window, further offline codes are refused unchecked.
+    offline_code_max_failures: int = _setting("OFFLINE_CODE_MAX_FAILURES", 10, ge=1, le=1000)
+    offline_code_failure_window_seconds: int = _setting("OFFLINE_CODE_FAILURE_WINDOW_SECONDS", 900, ge=60, le=86400)
     server_name: str = _setting("SERVER_NAME", "pushgate")
     syslog_enabled: bool = _setting("SYSLOG_ENABLED", False)
     syslog_host: str = _setting("SYSLOG_HOST", "127.0.0.1")
