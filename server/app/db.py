@@ -151,7 +151,9 @@ class Database:
 
             names = (path.name, f"{path.name}-journal", f"{path.name}-wal", f"{path.name}-shm")
             for index, name in enumerate(names):
-                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                # O_NONBLOCK: opening a FIFO planted at one of these names must
+                # fail the regular-file check below, not block startup forever.
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
                 if create and index == 0:
                     flags |= os.O_CREAT
                 try:
