@@ -604,6 +604,34 @@ def _consume_approved_request(
         return False
 
 
+_CACHE_NOT_RECORDED = object()
+
+
+def _record_server_cache(
+    cfg: AuthConfig,
+    username: str,
+    server_cache: dict[str, Any],
+    consumed_backup_code_hash: str | None,
+) -> Any:
+    """Store the server's cache snapshot, or return _CACHE_NOT_RECORDED when the disk refuses it.
+
+    A full, read-only or failing filesystem must not turn a live approval
+    into a denial: the server's answer is authoritative and the cache only
+    serves later outages. The file on disk is left as it was, so its spent
+    backup-code tombstones and TOTP counter survive.
+    """
+    try:
+        return write_cache(
+            cfg.cache_dir,
+            username,
+            server_cache,
+            authoritative_snapshot=True,
+            consumed_backup_code_hash=consumed_backup_code_hash,
+        )
+    except OSError:
+        return _CACHE_NOT_RECORDED
+
+
 def always_fail_closed(cfg: AuthConfig, username: str | None) -> bool:
     """True for an account listed in PUSHGATE_FAIL_CLOSED_USERS."""
     return str(username or "").strip().lower() in cfg.fail_closed_users
@@ -684,13 +712,14 @@ def authenticate(
             server_cache = dict(data["cache"])
             server_cache["binding"] = expected_binding
             consumed_hash = offline_code_hash if data["status"] == "approved" and data.get("allowed") is True else None
-            local_cache = write_cache(
-                cfg.cache_dir,
-                username,
-                server_cache,
-                authoritative_snapshot=True,
-                consumed_backup_code_hash=consumed_hash,
-            )
+            recorded = _record_server_cache(cfg, username, server_cache, consumed_hash)
+            if recorded is _CACHE_NOT_RECORDED:
+                if offline_code:
+                    # The server may have spent this code; without a local
+                    # record a later outage could accept it again.
+                    return 1
+            else:
+                local_cache = recorded
             if time.monotonic() >= deadline:
                 return 1
             if data["status"] != "pending":
@@ -718,13 +747,12 @@ def authenticate(
                 server_cache = dict(data["cache"])
                 server_cache["binding"] = expected_binding
                 consumed_hash = offline_code_hash if data["status"] == "approved" and data.get("allowed") is True else None
-                local_cache = write_cache(
-                    cfg.cache_dir,
-                    username,
-                    server_cache,
-                    authoritative_snapshot=True,
-                    consumed_backup_code_hash=consumed_hash,
-                )
+                recorded = _record_server_cache(cfg, username, server_cache, consumed_hash)
+                if recorded is _CACHE_NOT_RECORDED:
+                    if offline_code:
+                        return 1
+                else:
+                    local_cache = recorded
                 if time.monotonic() >= deadline:
                     return 1
                 if data["status"] != "pending":
