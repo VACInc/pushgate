@@ -531,6 +531,11 @@ def stdin_offline_code() -> str | None:
     return value or None
 
 
+def _caller_pid() -> int:
+    """The parent process ID; it changes when the PAM caller exits first."""
+    return os.getppid()
+
+
 def preflight(username: str, cfg: AuthConfig | None = None, system_name: str | None = None) -> dict[str, Any]:
     cfg = cfg or config_from_env()
     system_name = cfg.system_name or system_name or os.uname().nodename
@@ -672,6 +677,10 @@ def authenticate(
     cfg: AuthConfig | None = None,
 ) -> int:
     cfg = cfg or config_from_env()
+    # pam_exec's caller (sshd's PAM process, sudo, login). When it is gone,
+    # for example because sshd's LoginGraceTime ended the login, this
+    # process is re-parented and there is no login left to admit.
+    caller = _caller_pid()
     if always_fail_closed(cfg, username):
         offline_code = None
     system_name = cfg.system_name or system_name or os.uname().nodename
@@ -724,6 +733,8 @@ def authenticate(
                 return 1
             if data["status"] != "pending":
                 if data["status"] == "approved" and data.get("allowed") is True:
+                    if _caller_pid() != caller:
+                        return 1
                     return 0 if _consume_approved_request(client, cfg, request_id, deadline) else 1
                 return 1
             while True:
@@ -733,6 +744,9 @@ def authenticate(
                 time.sleep(min(0.5, remaining))
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    return 1
+                if _caller_pid() != caller:
+                    # Stop asking; the request expires on the server unused.
                     return 1
                 poll_path = f"{path}/{request_id}"
                 poll = client.get(
@@ -757,6 +771,8 @@ def authenticate(
                     return 1
                 if data["status"] != "pending":
                     if data["status"] == "approved" and data.get("allowed") is True:
+                        if _caller_pid() != caller:
+                            return 1
                         return 0 if _consume_approved_request(client, cfg, request_id, deadline) else 1
                     return 1
     except httpx.HTTPStatusError as exc:
