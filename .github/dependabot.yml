@@ -1,0 +1,108 @@
+# Dependency update policy.
+# - cooldown: never propose a release younger than 7 days (14 for majors), so a
+#   hijacked/malicious publish has time to be detected and yanked first.
+# - Security updates are not subject to the schedule and still open promptly.
+# - Gradle PRs change build files only: Dependabot cannot regenerate
+#   gradle.lockfile, buildscript-gradle.lockfile or verification-metadata.xml,
+#   so CI fails until a maintainer runs the regeneration command in the app
+#   README. That failure is the intended gate, not a bug.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  # pyproject.toml -> requirements.lock (pip-compile), requirements-dev.in/.lock
+  # and requirements-audit.in/.lock.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      python-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+
+  # Host PAM helper lock (pam/requirements.in -> pam/requirements.lock).
+  - package-ecosystem: pip
+    directory: /pam
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      pam-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: npm
+    directory: /admin-web
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      web-dev-tooling:
+        dependency-type: development
+        update-types: [minor, patch]
+      web-runtime:
+        dependency-type: production
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: gradle
+    directories:
+      - /android-phone
+      - /android-wear
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 14
+    groups:
+      android:
+        patterns: ["*"]
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: deps
+
+  # Base images are pinned by digest; Dependabot bumps tag and digest together.
+  - package-ecosystem: docker
+    directory: /server
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      # Major Postgres upgrades need a dump/restore (docs/production.md).
+      - dependency-name: postgres
+        update-types: [version-update:semver-major]
+      # Redis majors change licensing/behaviour; review by hand.
+      - dependency-name: redis
+        update-types: [version-update:semver-major]
+    commit-message:
+      prefix: deps
