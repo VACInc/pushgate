@@ -285,8 +285,24 @@ def obj(model: Any, include_secret: bool = False) -> dict[str, Any]:
     return data
 
 
+def finite_json(value: Any) -> Any:
+    """`value` with NaN and +/-Infinity replaced by None, at any depth.
+
+    JSON responses refuse non-finite numbers. Append-only rows written before
+    request bodies were checked can still hold them and must stay readable.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: finite_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [finite_json(item) for item in value]
+    return value
+
+
 def auth_log_obj(row: AuthLogEntry) -> dict[str, Any]:
     data = obj(row)
+    data["detail"] = finite_json(data.get("detail"))
     data["log_id"] = data.pop("id")
     data["id"] = data.pop("auth_request_id")
     return data
@@ -943,12 +959,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Widths of the auth_requests text columns. PostgreSQL refuses a longer value
     # (or one with a NUL), so check before any SQL and answer 422, not a 500.
     AUTH_TEXT_LIMITS = {"system": 128, "pam_service": 64, "source_ip": 64}
+    # Free-form display text kept in the request detail and the auth log.
+    GEOLOCATION_LIMIT = 128
 
     def text_fits(value: str, limit: int) -> bool:
         return len(value) <= limit and "\x00" not in value
 
     def validate_auth_text(payload: dict[str, Any]) -> None:
         """Type and length checks for the caller-supplied text a request stores."""
+        geolocation = payload.get("geolocation")
+        if geolocation is not None and (not isinstance(geolocation, str) or not text_fits(geolocation, GEOLOCATION_LIMIT)):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_geolocation",
+                    "message": f"geolocation must be text of at most {GEOLOCATION_LIMIT} characters",
+                },
+            )
         for field in ("pam_service", "source_ip"):
             value = payload.get(field)
             if value is None:
@@ -2085,7 +2112,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def parse_auth_payload(body: bytes) -> dict[str, Any]:
         try:
             payload = json.loads(body.decode() or "{}")
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
+            # ValueError covers malformed JSON, bad UTF-8 and integers past
+            # Python's digit limit; RecursionError covers absurd nesting.
             raise HTTPException(status_code=422, detail={"code": "invalid_json", "message": "request body must be JSON"}) from None
         if not isinstance(payload, dict):
             raise HTTPException(status_code=422, detail={"code": "invalid_json", "message": "request body must be a JSON object"})
