@@ -81,3 +81,7 @@ the entire compiler is not relicensed under Apache-2.0. Ship these notices with
 the binary. The signing application must disclose those components accurately.
 
 Code signing preparation and verification: [signing policy](../docs/windows-signing.md).
+
+## Code signing policy
+
+See [Code signing policy](../docs/code-signing-policy.md). Enrollment pending; no certificate or signed Windows release is claimed.

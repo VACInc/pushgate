@@ -77,3 +77,7 @@ Apache-2.0 licensed. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Dependencies a
 Windows signing is [being prepared](docs/windows-signing.md), is disabled, and
 no Foundation application has been submitted. Current releases are not claimed
 to be signed.
+
+## Code signing policy
+
+See [Code signing policy](docs/code-signing-policy.md). Enrollment pending; no certificate or signed Windows release is claimed.
