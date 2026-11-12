@@ -1,6 +1,6 @@
 # Windows code signing preparation
 
-[PushGate](https://github.com/VACInc/pushgate) Windows 0.1.0 remains a staged unsigned candidate. No provider application or signing request submitted. No Windows binary release is public yet.
+[PushGate](https://github.com/VACInc/pushgate) Windows 0.1.0 remains a staged unsigned candidate. An application was submitted to SignPath Foundation on 2026-11-12. No signing request submitted. No Windows binary release is public yet.
 
 See [Code signing policy](code-signing-policy.md) for roles, privacy, artifact restrictions and pending provider status. Contact and identity details belong only in the private application, never this repository.
 

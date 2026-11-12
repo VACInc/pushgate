@@ -14,8 +14,9 @@ jobs:
           python-version: '3.12'
       - run: pip install --require-hashes -r requirements.lock -r requirements-dev.lock
       - run: ruff check --select E9,F63,F7,F82 server pam sdk qa
+      # PE candidate tests run in windows-check.yml after building PushGateWin.dll.
       - name: Test without external network
-        run: sudo env PATH="$PATH" unshare --net -- bash -c 'ip link set lo up; exec "$@"' bash python -m pytest -q qa pam sdk
+        run: sudo env PATH="$PATH" unshare --net -- bash -c 'ip link set lo up; exec "$@"' bash python -m pytest -q qa pam sdk --ignore=qa/signing/test_candidate.py
   web:
     runs-on: ubuntu-24.04
     defaults:
