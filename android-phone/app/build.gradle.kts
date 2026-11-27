@@ -1,10 +1,8 @@
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Properties
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -44,10 +42,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
     }
 
     buildFeatures {
@@ -107,13 +101,11 @@ dependencies {
 }
 
 fun uninstallIfPresent(adb: File, serial: String, packageName: String) {
-    val output = ByteArrayOutputStream()
-    exec {
-        isIgnoreExitValue = true
-        commandLine(adb.absolutePath, "-s", serial, "uninstall", packageName)
-        standardOutput = output
-        errorOutput = output
-    }
+    ProcessBuilder(adb.absolutePath, "-s", serial, "uninstall", packageName)
+        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+        .redirectError(ProcessBuilder.Redirect.DISCARD)
+        .start()
+        .waitFor()
 }
 
 // Stale emulator installs signed by another key fail before instrumentation and report 0 tests.
